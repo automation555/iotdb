@@ -19,6 +19,9 @@
 package org.apache.iotdb.db.utils;
 
 import org.apache.iotdb.commons.auth.AuthException;
+import org.apache.iotdb.commons.conf.CommonConfig;
+import org.apache.iotdb.commons.conf.CommonDescriptor;
+import org.apache.iotdb.commons.udf.api.exception.UDFRegistrationException;
 import org.apache.iotdb.commons.udf.service.UDFRegistrationService;
 import org.apache.iotdb.db.auth.AuthorizerManager;
 import org.apache.iotdb.db.conf.IoTDBConfig;
@@ -49,12 +52,10 @@ import org.apache.iotdb.db.rescon.TsFileResourceManager;
 import org.apache.iotdb.db.service.IoTDB;
 import org.apache.iotdb.db.sync.pipedata.queue.PipeDataQueueFactory;
 import org.apache.iotdb.db.wal.WALManager;
-import org.apache.iotdb.db.wal.recover.WALRecoverManager;
 import org.apache.iotdb.metrics.config.MetricConfigDescriptor;
 import org.apache.iotdb.rpc.TConfigurationConst;
 import org.apache.iotdb.rpc.TSocketWrapper;
 import org.apache.iotdb.tsfile.utils.FilePathUtils;
-import org.apache.iotdb.udf.api.exception.UDFRegistrationException;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.thrift.TConfiguration;
@@ -81,6 +82,7 @@ public class EnvironmentUtils {
   private static final Logger logger = LoggerFactory.getLogger(EnvironmentUtils.class);
 
   private static final IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
+  private static final CommonConfig commonConfig = CommonDescriptor.getInstance().getConfig();
   private static final DirectoryManager directoryManager = DirectoryManager.getInstance();
 
   public static long TEST_QUERY_JOB_ID = 1;
@@ -140,7 +142,6 @@ public class EnvironmentUtils {
 
     // clean wal manager
     WALManager.getInstance().clear();
-    WALRecoverManager.getInstance().clear();
 
     // clean storage group manager
     if (!StorageEngine.getInstance().deleteAll()) {
@@ -268,7 +269,7 @@ public class EnvironmentUtils {
       cleanDir(walDir);
     }
     // delete sync dir
-    cleanDir(config.getSyncDir());
+    cleanDir(commonConfig.getSyncFolder());
     // delete data files
     for (String dataDir : config.getDataDirs()) {
       cleanDir(dataDir);
@@ -341,7 +342,6 @@ public class EnvironmentUtils {
     IDTableManager.getInstance().clear();
     TsFileResourceManager.getInstance().clear();
     WALManager.getInstance().clear();
-    WALRecoverManager.getInstance().clear();
     reactiveDaemon();
   }
 
@@ -360,7 +360,7 @@ public class EnvironmentUtils {
     String sgDir = FilePathUtils.regularizePath(config.getSystemDir()) + "storage_groups";
     createDir(sgDir);
     // create sync
-    createDir(config.getSyncDir());
+    createDir(commonConfig.getSyncFolder());
     // create query
     createDir(config.getQueryDir());
     createDir(TestConstant.OUTPUT_DATA_DIR);

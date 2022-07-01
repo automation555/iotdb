@@ -18,6 +18,7 @@
  */
 package org.apache.iotdb.confignode.service.thrift;
 
+import org.apache.iotdb.common.rpc.thrift.TConfigNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TConsensusGroupType;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeInfo;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeLocation;
@@ -25,7 +26,6 @@ import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.common.rpc.thrift.TSeriesPartitionSlot;
-import org.apache.iotdb.common.rpc.thrift.TSetTTLReq;
 import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
 import org.apache.iotdb.commons.auth.entity.PrivilegeType;
 import org.apache.iotdb.commons.conf.CommonDescriptor;
@@ -37,7 +37,7 @@ import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.udf.service.UDFClassLoaderManager;
 import org.apache.iotdb.commons.udf.service.UDFExecutableManager;
 import org.apache.iotdb.commons.udf.service.UDFRegistrationService;
-import org.apache.iotdb.confignode.conf.ConfigNodeConfig;
+import org.apache.iotdb.confignode.conf.ConfigNodeConf;
 import org.apache.iotdb.confignode.conf.ConfigNodeConstant;
 import org.apache.iotdb.confignode.conf.ConfigNodeDescriptor;
 import org.apache.iotdb.confignode.conf.ConfigNodeStartupCheck;
@@ -55,6 +55,8 @@ import org.apache.iotdb.confignode.rpc.thrift.TDataPartitionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TDataPartitionResp;
 import org.apache.iotdb.confignode.rpc.thrift.TDeleteStorageGroupsReq;
 import org.apache.iotdb.confignode.rpc.thrift.TGlobalConfig;
+import org.apache.iotdb.confignode.rpc.thrift.TOperateReceiverPipeReq;
+import org.apache.iotdb.confignode.rpc.thrift.TPipeInfo;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaNodeManagementReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaNodeManagementResp;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaPartitionReq;
@@ -62,12 +64,17 @@ import org.apache.iotdb.confignode.rpc.thrift.TSchemaPartitionResp;
 import org.apache.iotdb.confignode.rpc.thrift.TSetDataReplicationFactorReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSetSchemaReplicationFactorReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSetStorageGroupReq;
+import org.apache.iotdb.confignode.rpc.thrift.TSetTTLReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSetTimePartitionIntervalReq;
+import org.apache.iotdb.confignode.rpc.thrift.TShowPipeReq;
+import org.apache.iotdb.confignode.rpc.thrift.TShowPipeResp;
 import org.apache.iotdb.confignode.rpc.thrift.TStorageGroupSchema;
 import org.apache.iotdb.confignode.rpc.thrift.TStorageGroupSchemaResp;
 import org.apache.iotdb.db.mpp.common.schematree.PathPatternTree;
 import org.apache.iotdb.db.qp.logical.sys.AuthorOperator;
+import org.apache.iotdb.db.qp.utils.DatetimeUtils;
 import org.apache.iotdb.rpc.TSStatusCode;
+import org.apache.iotdb.service.transport.thrift.RequestType;
 import org.apache.iotdb.tsfile.utils.PublicBAOS;
 
 import org.apache.ratis.util.FileUtils;
@@ -97,11 +104,11 @@ public class ConfigNodeRPCServiceProcessorTest {
 
   @BeforeClass
   public static void beforeClass() throws StartupException, ConfigurationException, IOException {
-    final ConfigNodeConfig configNodeConfig = ConfigNodeDescriptor.getInstance().getConf();
+    final ConfigNodeConf configNodeConf = ConfigNodeDescriptor.getInstance().getConf();
     UDFExecutableManager.setupAndGetInstance(
-        configNodeConfig.getTemporaryLibDir(), configNodeConfig.getUdfLibDir());
-    UDFClassLoaderManager.setupAndGetInstance(configNodeConfig.getUdfLibDir());
-    UDFRegistrationService.setupAndGetInstance(configNodeConfig.getSystemUdfDir());
+        configNodeConf.getTemporaryLibDir(), configNodeConf.getUdfLibDir());
+    UDFClassLoaderManager.setupAndGetInstance(configNodeConf.getUdfLibDir());
+    UDFRegistrationService.setupAndGetInstance(configNodeConf.getSystemUdfDir());
     ConfigNodeStartupCheck.getInstance().startUpCheck();
   }
 
@@ -117,6 +124,7 @@ public class ConfigNodeRPCServiceProcessorTest {
     FileUtils.deleteFully(new File(ConfigNodeDescriptor.getInstance().getConf().getConsensusDir()));
     FileUtils.deleteFully(
         new File(CommonDescriptor.getInstance().getConfig().getProcedureWalFolder()));
+    FileUtils.deleteFully(new File(CommonDescriptor.getInstance().getConfig().getSyncFolder()));
   }
 
   @AfterClass
@@ -145,9 +153,9 @@ public class ConfigNodeRPCServiceProcessorTest {
   private void registerDataNodes() throws TException {
     for (int i = 0; i < 3; i++) {
       TDataNodeLocation dataNodeLocation = new TDataNodeLocation();
-      dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667 + i));
+      dataNodeLocation.setExternalEndPoint(new TEndPoint("0.0.0.0", 6667 + i));
       dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9003 + i));
-      dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 8777 + i));
+      dataNodeLocation.setDataBlockManagerEndPoint(new TEndPoint("0.0.0.0", 8777 + i));
       dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 40010 + i));
       dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 50010 + i));
 
@@ -171,9 +179,9 @@ public class ConfigNodeRPCServiceProcessorTest {
 
     // test success re-register
     TDataNodeLocation dataNodeLocation = new TDataNodeLocation();
-    dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6668));
+    dataNodeLocation.setExternalEndPoint(new TEndPoint("0.0.0.0", 6668));
     dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9004));
-    dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 8778));
+    dataNodeLocation.setDataBlockManagerEndPoint(new TEndPoint("0.0.0.0", 8778));
     dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 40011));
     dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 50011));
 
@@ -199,27 +207,27 @@ public class ConfigNodeRPCServiceProcessorTest {
     infoList.sort(Comparator.comparingInt(Map.Entry::getKey));
     for (int i = 0; i < 3; i++) {
       dataNodeLocation.setDataNodeId(i);
-      dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667 + i));
+      dataNodeLocation.setExternalEndPoint(new TEndPoint("0.0.0.0", 6667 + i));
       dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9003 + i));
-      dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 8777 + i));
+      dataNodeLocation.setDataBlockManagerEndPoint(new TEndPoint("0.0.0.0", 8777 + i));
       dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 40010 + i));
       dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 50010 + i));
       Assert.assertEquals(dataNodeLocation, infoList.get(i).getValue().getLocation());
     }
 
-    infoResp = processor.getDataNodeInfo(0);
+    infoResp = processor.getDataNodeInfo(1);
     Assert.assertEquals(
         TSStatusCode.SUCCESS_STATUS.getStatusCode(), infoResp.getStatus().getCode());
     infoMap = infoResp.getDataNodeInfoMap();
     Assert.assertEquals(1, infoMap.size());
-    Assert.assertNotNull(infoMap.get(0));
-    dataNodeLocation.setDataNodeId(0);
-    dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667));
-    dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9003));
-    dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 8777));
-    dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 40010));
-    dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 50010));
-    Assert.assertEquals(dataNodeLocation, infoMap.get(0).getLocation());
+    Assert.assertNotNull(infoMap.get(1));
+    dataNodeLocation.setDataNodeId(1);
+    dataNodeLocation.setExternalEndPoint(new TEndPoint("0.0.0.0", 6668));
+    dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9004));
+    dataNodeLocation.setDataBlockManagerEndPoint(new TEndPoint("0.0.0.0", 8778));
+    dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 40011));
+    dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 50011));
+    Assert.assertEquals(dataNodeLocation, infoMap.get(1).getLocation());
   }
 
   @Test
@@ -228,14 +236,20 @@ public class ConfigNodeRPCServiceProcessorTest {
 
     TClusterNodeInfos clusterNodes = processor.getAllClusterNodeInfos();
 
+    List<TConfigNodeLocation> configNodeInfos = clusterNodes.getConfigNodeList();
+    Assert.assertEquals(1, configNodeInfos.size());
+    TConfigNodeLocation configNodeLocation =
+        new TConfigNodeLocation(new TEndPoint("0.0.0.0", 22277), new TEndPoint("0.0.0.0", 22278));
+    Assert.assertEquals(configNodeLocation, configNodeInfos.get(0));
+
     List<TDataNodeLocation> dataNodeInfos = clusterNodes.getDataNodeList();
     Assert.assertEquals(3, dataNodeInfos.size());
     TDataNodeLocation dataNodeLocation = new TDataNodeLocation();
     for (int i = 0; i < 3; i++) {
       dataNodeLocation.setDataNodeId(i);
-      dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667 + i));
+      dataNodeLocation.setExternalEndPoint(new TEndPoint("0.0.0.0", 6667 + i));
       dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9003 + i));
-      dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 8777 + i));
+      dataNodeLocation.setDataBlockManagerEndPoint(new TEndPoint("0.0.0.0", 8777 + i));
       dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 40010 + i));
       dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 50010 + i));
       Assert.assertEquals(dataNodeLocation, dataNodeInfos.get(i));
@@ -290,8 +304,8 @@ public class ConfigNodeRPCServiceProcessorTest {
     Assert.assertNotNull(storageGroupSchema);
     Assert.assertEquals(sg0, storageGroupSchema.getName());
     Assert.assertEquals(Long.MAX_VALUE, storageGroupSchema.getTTL());
-    Assert.assertEquals(1, storageGroupSchema.getSchemaReplicationFactor());
-    Assert.assertEquals(1, storageGroupSchema.getDataReplicationFactor());
+    Assert.assertEquals(3, storageGroupSchema.getSchemaReplicationFactor());
+    Assert.assertEquals(3, storageGroupSchema.getDataReplicationFactor());
     Assert.assertEquals(604800, storageGroupSchema.getTimePartitionInterval());
     storageGroupSchema = schemaMap.get(sg1);
     Assert.assertNotNull(storageGroupSchema);
@@ -309,9 +323,9 @@ public class ConfigNodeRPCServiceProcessorTest {
     // test StorageGroup setter interfaces
     status = processor.setTTL(new TSetTTLReq(sg1, Long.MAX_VALUE));
     Assert.assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
-    status = processor.setSchemaReplicationFactor(new TSetSchemaReplicationFactorReq(sg1, 1));
+    status = processor.setSchemaReplicationFactor(new TSetSchemaReplicationFactorReq(sg1, 3));
     Assert.assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
-    status = processor.setDataReplicationFactor(new TSetDataReplicationFactorReq(sg1, 1));
+    status = processor.setDataReplicationFactor(new TSetDataReplicationFactorReq(sg1, 3));
     Assert.assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
     status = processor.setTimePartitionInterval(new TSetTimePartitionIntervalReq(sg1, 604800L));
     Assert.assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
@@ -325,8 +339,8 @@ public class ConfigNodeRPCServiceProcessorTest {
     Assert.assertNotNull(storageGroupSchema);
     Assert.assertEquals(sg1, storageGroupSchema.getName());
     Assert.assertEquals(Long.MAX_VALUE, storageGroupSchema.getTTL());
-    Assert.assertEquals(1, storageGroupSchema.getSchemaReplicationFactor());
-    Assert.assertEquals(1, storageGroupSchema.getDataReplicationFactor());
+    Assert.assertEquals(3, storageGroupSchema.getSchemaReplicationFactor());
+    Assert.assertEquals(3, storageGroupSchema.getDataReplicationFactor());
     Assert.assertEquals(604800, storageGroupSchema.getTimePartitionInterval());
   }
 
@@ -335,7 +349,7 @@ public class ConfigNodeRPCServiceProcessorTest {
       throws IllegalPathException, IOException {
     PathPatternTree patternTree = new PathPatternTree();
     for (String path : paths) {
-      patternTree.appendPathPattern(new PartialPath(path));
+      patternTree.appendPath(new PartialPath(path));
     }
     patternTree.constructTree();
 
@@ -408,7 +422,7 @@ public class ConfigNodeRPCServiceProcessorTest {
           .get(sg + i)
           .forEach(
               (tSeriesPartitionSlot, tRegionReplicaSet) -> {
-                Assert.assertEquals(1, tRegionReplicaSet.getDataNodeLocationsSize());
+                Assert.assertEquals(3, tRegionReplicaSet.getDataNodeLocationsSize());
                 Assert.assertEquals(
                     TConsensusGroupType.SchemaRegion, tRegionReplicaSet.getRegionId().getType());
               });
@@ -431,7 +445,7 @@ public class ConfigNodeRPCServiceProcessorTest {
           .get(sg + i)
           .forEach(
               (tSeriesPartitionSlot, tRegionReplicaSet) -> {
-                Assert.assertEquals(1, tRegionReplicaSet.getDataNodeLocationsSize());
+                Assert.assertEquals(3, tRegionReplicaSet.getDataNodeLocationsSize());
                 Assert.assertEquals(
                     TConsensusGroupType.SchemaRegion, tRegionReplicaSet.getRegionId().getType());
               });
@@ -453,7 +467,7 @@ public class ConfigNodeRPCServiceProcessorTest {
         .get(sg0)
         .forEach(
             (tSeriesPartitionSlot, tRegionReplicaSet) -> {
-              Assert.assertEquals(1, tRegionReplicaSet.getDataNodeLocationsSize());
+              Assert.assertEquals(3, tRegionReplicaSet.getDataNodeLocationsSize());
               Assert.assertEquals(
                   TConsensusGroupType.SchemaRegion, tRegionReplicaSet.getRegionId().getType());
             });
@@ -464,7 +478,7 @@ public class ConfigNodeRPCServiceProcessorTest {
         .get(sg1)
         .forEach(
             (tSeriesPartitionSlot, tRegionReplicaSet) -> {
-              Assert.assertEquals(1, tRegionReplicaSet.getDataNodeLocationsSize());
+              Assert.assertEquals(3, tRegionReplicaSet.getDataNodeLocationsSize());
               Assert.assertEquals(
                   TConsensusGroupType.SchemaRegion, tRegionReplicaSet.getRegionId().getType());
             });
@@ -535,9 +549,9 @@ public class ConfigNodeRPCServiceProcessorTest {
                   .get(0)
                   .getRegionId()
                   .getType());
-          // Including one RegionReplica
+          // Including three RegionReplica
           Assert.assertEquals(
-              1,
+              3,
               dataPartitionMap
                   .get(storageGroup)
                   .get(seriesPartitionSlot)
@@ -1088,5 +1102,43 @@ public class ConfigNodeRPCServiceProcessorTest {
     Assert.assertEquals(2, nodeManagementResp.getMatchedNodeSize());
     Assert.assertNotNull(nodeManagementResp.getSchemaRegionMap());
     Assert.assertEquals(0, nodeManagementResp.getSchemaRegionMapSize());
+  }
+
+  @Test
+  public void testOperateReceiverPipe() throws Exception {
+    TSStatus status;
+    // create pipe p
+    TOperateReceiverPipeReq createReq =
+        new TOperateReceiverPipeReq(RequestType.CREATE, "p", "192.168.11.11", 1);
+    status = processor.operateReceiverPipe(createReq);
+    Assert.assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
+    // create pipe p1
+    TOperateReceiverPipeReq createReq1 =
+        new TOperateReceiverPipeReq(RequestType.CREATE, "p1", "192.168.22.22", 2);
+    status = processor.operateReceiverPipe(createReq1);
+    Assert.assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
+    // start pipe p
+    TOperateReceiverPipeReq startReq =
+        new TOperateReceiverPipeReq(RequestType.START, "p", "192.168.11.11", 1);
+    status = processor.operateReceiverPipe(startReq);
+    Assert.assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), status.getCode());
+    // show pipe
+    TShowPipeResp showPipeResp = processor.showPipe(new TShowPipeReq());
+    Assert.assertEquals(
+        TSStatusCode.SUCCESS_STATUS.getStatusCode(), showPipeResp.getStatus().getCode());
+    Assert.assertEquals(2, showPipeResp.getPipeInfoList().size());
+    for (TPipeInfo pipeInfo : showPipeResp.getPipeInfoList()) {
+      if (pipeInfo.getPipeName().equals("p")) {
+        Assert.assertEquals("RUNNING", pipeInfo.getStatus());
+        Assert.assertEquals("192.168.11.11", pipeInfo.getRemote());
+        Assert.assertEquals(DatetimeUtils.convertLongToDate(1), pipeInfo.getCreateTime());
+        Assert.assertEquals("receiver", pipeInfo.getRole());
+      } else if (pipeInfo.getPipeName().equals("p1")) {
+        Assert.assertEquals("STOP", pipeInfo.getStatus());
+        Assert.assertEquals("192.168.22.22", pipeInfo.getRemote());
+        Assert.assertEquals(DatetimeUtils.convertLongToDate(2), pipeInfo.getCreateTime());
+        Assert.assertEquals("receiver", pipeInfo.getRole());
+      }
+    }
   }
 }

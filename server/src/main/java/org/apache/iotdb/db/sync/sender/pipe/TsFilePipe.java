@@ -21,10 +21,10 @@ package org.apache.iotdb.db.sync.sender.pipe;
 
 import org.apache.iotdb.commons.exception.MetadataException;
 import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.commons.sync.SyncPathUtil;
 import org.apache.iotdb.db.engine.modification.Deletion;
 import org.apache.iotdb.db.exception.sync.PipeException;
 import org.apache.iotdb.db.qp.physical.PhysicalPlan;
-import org.apache.iotdb.db.sync.conf.SyncPathUtil;
 import org.apache.iotdb.db.sync.pipedata.DeletionPipeData;
 import org.apache.iotdb.db.sync.pipedata.PipeData;
 import org.apache.iotdb.db.sync.pipedata.SchemaPipeData;
@@ -32,6 +32,7 @@ import org.apache.iotdb.db.sync.pipedata.TsFilePipeData;
 import org.apache.iotdb.db.sync.pipedata.queue.BufferedPipeDataQueue;
 import org.apache.iotdb.db.sync.sender.manager.SchemaSyncManager;
 import org.apache.iotdb.db.sync.sender.manager.TsFileSyncManager;
+import org.apache.iotdb.db.sync.sender.pipe.Pipe.PipeStatus;
 import org.apache.iotdb.db.sync.sender.recovery.TsFilePipeLogger;
 
 import org.slf4j.Logger;
@@ -62,7 +63,6 @@ public class TsFilePipe implements Pipe {
 
   private boolean isCollectingRealTimeData;
   private long maxSerialNumber;
-  private boolean disconnected; // true if pipe cannot connect to receiver
 
   private PipeStatus status;
 
@@ -85,7 +85,6 @@ public class TsFilePipe implements Pipe {
     this.maxSerialNumber = Math.max(0L, realTimeQueue.getLastMaxSerialNumber());
 
     this.status = PipeStatus.STOP;
-    this.disconnected = false;
   }
 
   @Override
@@ -275,16 +274,6 @@ public class TsFilePipe implements Pipe {
       historyQueue.commit();
     }
     realTimeQueue.commit();
-  }
-
-  @Override
-  public void setDisconnected(boolean disconnected) {
-    this.disconnected = disconnected;
-  }
-
-  @Override
-  public boolean isDisconnected() {
-    return disconnected;
   }
 
   public void commit(long serialNumber) {
