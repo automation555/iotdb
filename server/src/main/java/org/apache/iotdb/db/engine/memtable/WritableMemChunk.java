@@ -19,7 +19,6 @@
 package org.apache.iotdb.db.engine.memtable;
 
 import org.apache.iotdb.db.utils.datastructure.TVList;
-import org.apache.iotdb.db.wal.buffer.IWALByteBufferView;
 import org.apache.iotdb.tsfile.exception.write.UnSupportedDataTypeException;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.utils.Binary;
@@ -27,14 +26,10 @@ import org.apache.iotdb.tsfile.utils.BitMap;
 import org.apache.iotdb.tsfile.write.chunk.ChunkWriterImpl;
 import org.apache.iotdb.tsfile.write.chunk.IChunkWriter;
 import org.apache.iotdb.tsfile.write.schema.IMeasurementSchema;
-import org.apache.iotdb.tsfile.write.schema.MeasurementSchema;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.DataInputStream;
-import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.List;
 
 public class WritableMemChunk implements IWritableMemChunk {
@@ -48,8 +43,6 @@ public class WritableMemChunk implements IWritableMemChunk {
     this.schema = schema;
     this.list = TVList.newList(schema.getType());
   }
-
-  private WritableMemChunk() {}
 
   @Override
   public void write(long insertTime, Object objectValue) {
@@ -79,7 +72,10 @@ public class WritableMemChunk implements IWritableMemChunk {
 
   @Override
   public void writeAlignedValue(
-      long insertTime, Object[] objectValue, List<IMeasurementSchema> schemaList) {
+      long insertTime,
+      Object[] objectValue,
+      List<Integer> failedIndices,
+      List<IMeasurementSchema> schemaList) {
     throw new UnSupportedDataTypeException(UNSUPPORTED_TYPE + list.getDataType());
   }
 
@@ -121,6 +117,7 @@ public class WritableMemChunk implements IWritableMemChunk {
       long[] times,
       Object[] valueList,
       BitMap[] bitMaps,
+      List<Integer> failedIndices,
       List<IMeasurementSchema> schemaList,
       int start,
       int end) {
@@ -356,26 +353,5 @@ public class WritableMemChunk implements IWritableMemChunk {
     if (list.getReferenceCount() == 0) {
       list.clear();
     }
-  }
-
-  @Override
-  public int serializedSize() {
-    return schema.serializedSize() + list.serializedSize();
-  }
-
-  @Override
-  public void serializeToWAL(IWALByteBufferView buffer) {
-    byte[] bytes = new byte[schema.serializedSize()];
-    schema.serializeTo(ByteBuffer.wrap(bytes));
-    buffer.put(bytes);
-
-    list.serializeToWAL(buffer);
-  }
-
-  public static WritableMemChunk deserialize(DataInputStream stream) throws IOException {
-    WritableMemChunk memChunk = new WritableMemChunk();
-    memChunk.schema = MeasurementSchema.deserializeFrom(stream);
-    memChunk.list = TVList.deserialize(stream);
-    return memChunk;
   }
 }

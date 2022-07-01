@@ -19,16 +19,17 @@
 
 package org.apache.iotdb.db.qp.physical.crud;
 
-import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
 import org.apache.iotdb.db.metadata.idtable.entry.IDeviceID;
 import org.apache.iotdb.db.metadata.mnode.IMeasurementMNode;
+import org.apache.iotdb.db.metadata.path.PartialPath;
 import org.apache.iotdb.db.qp.logical.Operator;
 import org.apache.iotdb.db.qp.physical.PhysicalPlan;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -45,7 +46,7 @@ public abstract class InsertPlan extends PhysicalPlan {
   protected String[] measurements;
   // get from client
   protected TSDataType[] dataTypes;
-  // get from SchemaProcessor
+  // get from MManager
   protected IMeasurementMNode[] measurementMNodes;
 
   /**
@@ -113,6 +114,10 @@ public abstract class InsertPlan extends PhysicalPlan {
     return failedMeasurements == null ? 0 : failedMeasurements.size();
   }
 
+  public List<Integer> getFailedIndices() {
+    return failedIndices == null ? Collections.emptyList() : failedIndices;
+  }
+
   public boolean isAligned() {
     return isAligned;
   }
@@ -122,8 +127,6 @@ public abstract class InsertPlan extends PhysicalPlan {
   }
 
   public abstract long getMinTime();
-
-  public abstract Object getFirstValueOfIndex(int index);
 
   /**
    * This method is overrided in InsertRowPlan and InsertTabletPlan. After marking failed

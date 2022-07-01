@@ -18,11 +18,11 @@
  */
 package org.apache.iotdb.db.engine.memtable;
 
-import org.apache.iotdb.commons.exception.IllegalPathException;
-import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.db.exception.metadata.IllegalPathException;
 import org.apache.iotdb.db.metadata.idtable.entry.DeviceIDFactory;
 import org.apache.iotdb.db.metadata.mnode.IMeasurementMNode;
 import org.apache.iotdb.db.metadata.mnode.MeasurementMNode;
+import org.apache.iotdb.db.metadata.path.PartialPath;
 import org.apache.iotdb.db.qp.physical.crud.InsertTabletPlan;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
@@ -64,6 +64,7 @@ public class MemTableTestUtils {
     for (long l = startTime; l <= endTime; l++) {
       iMemTable.write(
           DeviceIDFactory.getInstance().getDeviceID(new PartialPath(deviceId)),
+          Collections.emptyList(),
           Collections.singletonList(
               new MeasurementSchema(measurementId, dataType, TSEncoding.PLAIN)),
           l,
@@ -116,6 +117,8 @@ public class MemTableTestUtils {
     insertTabletPlan.setColumns(columns);
     insertTabletPlan.setRowCount(times.length);
     insertTabletPlan.setMeasurementMNodes(mNodes);
+    insertTabletPlan.setStart(0);
+    insertTabletPlan.setEnd(100);
 
     return insertTabletPlan;
   }
