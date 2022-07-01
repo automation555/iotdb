@@ -22,30 +22,35 @@ package org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write;
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.metadata.path.PathDeserializeUtil;
-import org.apache.iotdb.db.mpp.plan.planner.plan.node.IPartitionRelatedNode;
+import org.apache.iotdb.db.mpp.plan.analyze.Analysis;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanNodeId;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanNodeType;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanVisitor;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.WritePlanNode;
 import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
-import java.io.DataOutputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
-public class DeleteTimeSeriesNode extends PlanNode implements IPartitionRelatedNode {
+public class DeleteTimeSeriesNode extends WritePlanNode {
 
   private final List<PartialPath> pathList;
 
   private TRegionReplicaSet regionReplicaSet;
-  private List<PlanNode> children;
 
   public DeleteTimeSeriesNode(PlanNodeId id, List<PartialPath> pathList) {
     super(id);
     this.pathList = pathList;
-    this.children = new ArrayList<>();
+  }
+
+  private DeleteTimeSeriesNode(
+      PlanNodeId id, List<PartialPath> pathList, TRegionReplicaSet regionReplicaSet) {
+    super(id);
+    this.pathList = pathList;
+    this.regionReplicaSet = regionReplicaSet;
   }
 
   public List<PartialPath> getPathList() {
@@ -54,13 +59,11 @@ public class DeleteTimeSeriesNode extends PlanNode implements IPartitionRelatedN
 
   @Override
   public List<PlanNode> getChildren() {
-    return children;
+    return null;
   }
 
   @Override
-  public void addChild(PlanNode child) {
-    children.add(child);
-  }
+  public void addChild(PlanNode child) {}
 
   @Override
   public PlanNode clone() {
@@ -91,15 +94,6 @@ public class DeleteTimeSeriesNode extends PlanNode implements IPartitionRelatedN
     }
   }
 
-  @Override
-  protected void serializeAttributes(DataOutputStream stream) throws IOException {
-    PlanNodeType.DELETE_TIMESERIES.serialize(stream);
-    ReadWriteIOUtils.write(pathList.size(), stream);
-    for (PartialPath path : pathList) {
-      path.serialize(stream);
-    }
-  }
-
   public static DeleteTimeSeriesNode deserialize(ByteBuffer byteBuffer) {
     int size = ReadWriteIOUtils.readInt(byteBuffer);
     List<PartialPath> pathList = new ArrayList<>(size);
@@ -125,5 +119,15 @@ public class DeleteTimeSeriesNode extends PlanNode implements IPartitionRelatedN
         getPlanNodeId(),
         pathList,
         regionReplicaSet == null ? "Not Assigned" : regionReplicaSet.getRegionId());
+  }
+
+  @Override
+  public List<WritePlanNode> splitByPartition(Analysis analysis) {
+    return analysis.getRegionRequestList().stream()
+        .map(
+            pair ->
+                new DeleteTimeSeriesNode(
+                    getPlanNodeId(), pair.right, pair.left.getRegionReplicaSet()))
+        .collect(Collectors.toList());
   }
 }

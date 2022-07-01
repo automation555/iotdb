@@ -29,7 +29,6 @@ import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.NodePathsSch
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.SchemaFetchMergeNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.SchemaFetchScanNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.SchemaQueryMergeNode;
-import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.SchemaQueryOrderByHeatNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.SchemaQueryScanNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.TimeSeriesCountNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.read.TimeSeriesSchemaScanNode;
@@ -38,7 +37,7 @@ import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.CreateAlign
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.CreateMultiTimeSeriesNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.CreateTimeSeriesNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.DeleteTimeSeriesNode;
-import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.InternalCreateTimeSeriesNode;
+import org.apache.iotdb.db.mpp.plan.planner.plan.node.metedata.write.InvalidateSchemaCacheNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.AggregationNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.DeviceMergeNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.process.DeviceViewNode;
@@ -129,7 +128,7 @@ public abstract class PlanVisitor<R, C> {
     return visitPlan(node, context);
   }
 
-  public R visitAggregation(AggregationNode node, C context) {
+  public R visitRowBasedSeriesAggregate(AggregationNode node, C context) {
     return visitPlan(node, context);
   }
 
@@ -154,10 +153,6 @@ public abstract class PlanVisitor<R, C> {
   }
 
   public R visitSchemaQueryScan(SchemaQueryScanNode node, C context) {
-    return visitPlan(node, context);
-  }
-
-  public R visitSchemaQueryOrderByHeat(SchemaQueryOrderByHeatNode node, C context) {
     return visitPlan(node, context);
   }
 
@@ -217,6 +212,10 @@ public abstract class PlanVisitor<R, C> {
     return visitPlan(node, context);
   }
 
+  public R visitDeleteRegion(DeleteRegionNode node, C context) {
+    return visitPlan(node, context);
+  }
+
   public R visitInsertRow(InsertRowNode node, C context) {
     return visitPlan(node, context);
   }
@@ -273,7 +272,7 @@ public abstract class PlanVisitor<R, C> {
     return visitPlan(node, context);
   }
 
-  public R visitInternalCreateTimeSeries(InternalCreateTimeSeriesNode node, C context) {
+  public R visitInvalidateSchemaCache(InvalidateSchemaCacheNode node, C context) {
     return visitPlan(node, context);
   }
 }

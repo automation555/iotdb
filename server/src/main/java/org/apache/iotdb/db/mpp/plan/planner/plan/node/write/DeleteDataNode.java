@@ -20,11 +20,8 @@
 package org.apache.iotdb.db.mpp.plan.planner.plan.node.write;
 
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
-import org.apache.iotdb.commons.partition.DataPartition;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.metadata.path.PathDeserializeUtil;
-import org.apache.iotdb.db.mpp.common.schematree.DeviceSchemaInfo;
-import org.apache.iotdb.db.mpp.common.schematree.SchemaTree;
 import org.apache.iotdb.db.mpp.plan.analyze.Analysis;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanNode;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanNodeId;
@@ -33,17 +30,10 @@ import org.apache.iotdb.db.mpp.plan.planner.plan.node.PlanVisitor;
 import org.apache.iotdb.db.mpp.plan.planner.plan.node.WritePlanNode;
 import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
-import java.io.DataOutputStream;
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.stream.Collectors;
-
-import static org.apache.iotdb.commons.conf.IoTDBConstant.MULTI_LEVEL_PATH_WILDCARD;
 
 public class DeleteDataNode extends WritePlanNode {
 
@@ -112,34 +102,25 @@ public class DeleteDataNode extends WritePlanNode {
   @Override
   protected void serializeAttributes(ByteBuffer byteBuffer) {
     PlanNodeType.DELETE_DATA.serialize(byteBuffer);
+
+    ReadWriteIOUtils.write(deleteStartTime, byteBuffer);
+    ReadWriteIOUtils.write(deleteEndTime, byteBuffer);
+
     ReadWriteIOUtils.write(pathList.size(), byteBuffer);
     for (PartialPath path : pathList) {
       path.serialize(byteBuffer);
     }
-    ReadWriteIOUtils.write(deleteStartTime, byteBuffer);
-    ReadWriteIOUtils.write(deleteEndTime, byteBuffer);
-  }
-
-  @Override
-  protected void serializeAttributes(DataOutputStream stream) throws IOException {
-    PlanNodeType.DELETE_DATA.serialize(stream);
-    ReadWriteIOUtils.write(pathList.size(), stream);
-    for (PartialPath path : pathList) {
-      path.serialize(stream);
-    }
-    ReadWriteIOUtils.write(deleteStartTime, stream);
-    ReadWriteIOUtils.write(deleteEndTime, stream);
   }
 
   public static DeleteDataNode deserialize(ByteBuffer byteBuffer) {
+    long deleteStartTime = ReadWriteIOUtils.readLong(byteBuffer);
+    long deleteEndTime = ReadWriteIOUtils.readLong(byteBuffer);
+
     int size = ReadWriteIOUtils.readInt(byteBuffer);
     List<PartialPath> pathList = new ArrayList<>(size);
     for (int i = 0; i < size; i++) {
       pathList.add((PartialPath) PathDeserializeUtil.deserialize(byteBuffer));
     }
-    long deleteStartTime = ReadWriteIOUtils.readLong(byteBuffer);
-    long deleteEndTime = ReadWriteIOUtils.readLong(byteBuffer);
-
     PlanNodeId planNodeId = PlanNodeId.deserialize(byteBuffer);
     return new DeleteDataNode(planNodeId, pathList, deleteStartTime, deleteEndTime);
   }
@@ -168,34 +149,15 @@ public class DeleteDataNode extends WritePlanNode {
 
   @Override
   public List<WritePlanNode> splitByPartition(Analysis analysis) {
-    SchemaTree schemaTree = analysis.getSchemaTree();
-    DataPartition dataPartition = analysis.getDataPartitionInfo();
-
-    Map<TRegionReplicaSet, List<PartialPath>> regionToPatternMap = new HashMap<>();
-
-    for (PartialPath pathPattern : pathList) {
-      PartialPath devicePattern = pathPattern;
-      if (!pathPattern.getTailNode().equals(MULTI_LEVEL_PATH_WILDCARD)) {
-        devicePattern = pathPattern.getDevicePath();
-      }
-      for (DeviceSchemaInfo deviceSchemaInfo : schemaTree.getMatchedDevices(devicePattern)) {
-        PartialPath devicePath = deviceSchemaInfo.getDevicePath();
-        // todo implement time slot
-        for (TRegionReplicaSet regionReplicaSet :
-            dataPartition.getDataRegionReplicaSet(
-                devicePath.getFullPath(), Collections.emptyList())) {
-          regionToPatternMap
-              .computeIfAbsent(regionReplicaSet, o -> new ArrayList<>())
-              .addAll(pathPattern.alterPrefixPath(devicePath));
-        }
-      }
-    }
-
-    return regionToPatternMap.keySet().stream()
+    return analysis.getRegionRequestList().stream()
         .map(
-            o ->
+            pair ->
                 new DeleteDataNode(
-                    getPlanNodeId(), regionToPatternMap.get(o), deleteStartTime, deleteEndTime, o))
+                    getPlanNodeId(),
+                    pair.right,
+                    deleteStartTime,
+                    deleteEndTime,
+                    pair.left.getRegionReplicaSet()))
         .collect(Collectors.toList());
   }
 }
