@@ -21,10 +21,9 @@ package org.apache.iotdb.db.sync.sender.service;
 
 import org.apache.iotdb.commons.concurrent.IoTDBThreadPoolFactory;
 import org.apache.iotdb.commons.concurrent.ThreadName;
-import org.apache.iotdb.commons.concurrent.threadpool.ScheduledExecutorUtil;
+import org.apache.iotdb.commons.sync.SyncConstant;
 import org.apache.iotdb.commons.utils.TestOnly;
 import org.apache.iotdb.db.exception.SyncConnectionException;
-import org.apache.iotdb.db.sync.conf.SyncConstant;
 import org.apache.iotdb.db.sync.sender.pipe.IoTDBPipeSink;
 import org.apache.iotdb.db.sync.sender.pipe.Pipe;
 import org.apache.iotdb.db.sync.transport.client.ITransportClient;
@@ -53,7 +52,6 @@ public class TransportHandler {
   private long createTime;
   private final String localIP;
   protected ITransportClient transportClient;
-  private final Pipe pipe;
 
   protected ExecutorService transportExecutorService;
   private Future transportFuture;
@@ -62,9 +60,10 @@ public class TransportHandler {
   private Future heartbeatFuture;
 
   public TransportHandler(Pipe pipe, IoTDBPipeSink pipeSink) {
-    this.pipe = pipe;
     this.pipeName = pipe.getName();
     this.createTime = pipe.getCreateTime();
+    this.localIP = getLocalIP(pipeSink);
+    this.transportClient = new TransportClient(pipe, pipeSink.getIp(), pipeSink.getPort(), localIP);
 
     this.transportExecutorService =
         IoTDBThreadPoolFactory.newSingleThreadExecutor(
@@ -72,9 +71,6 @@ public class TransportHandler {
     this.heartbeatExecutorService =
         IoTDBThreadPoolFactory.newSingleThreadScheduledExecutor(
             ThreadName.SYNC_SENDER_HEARTBEAT.getName() + "-" + pipeName);
-
-    this.localIP = getLocalIP(pipeSink);
-    this.transportClient = new TransportClient(pipe, pipeSink.getIp(), pipeSink.getPort(), localIP);
   }
 
   private String getLocalIP(IoTDBPipeSink pipeSink) {
@@ -99,12 +95,8 @@ public class TransportHandler {
   public void start() {
     transportFuture = transportExecutorService.submit(transportClient);
     heartbeatFuture =
-        ScheduledExecutorUtil.safelyScheduleWithFixedDelay(
-            heartbeatExecutorService,
-            this::sendHeartbeat,
-            0,
-            SyncConstant.HEARTBEAT_DELAY_SECONDS,
-            TimeUnit.SECONDS);
+        heartbeatExecutorService.scheduleWithFixedDelay(
+            this::sendHeartbeat, 0, SyncConstant.HEARTBEAT_DELAY_SECONDS, TimeUnit.SECONDS);
   }
 
   public void stop() {
@@ -139,12 +131,7 @@ public class TransportHandler {
           .receiveMsg(
               transportClient.heartbeat(
                   new SyncRequest(RequestType.HEARTBEAT, pipeName, localIP, createTime)));
-      synchronized (((TransportClient) transportClient).getWaitLock()) {
-        pipe.setDisconnected(false);
-        ((TransportClient) transportClient).getWaitLock().notifyAll();
-      }
     } catch (SyncConnectionException e) {
-      pipe.setDisconnected(true);
       logger.warn(
           String.format(
               "Pipe %s sends heartbeat to receiver error, skip this time, because %s.",

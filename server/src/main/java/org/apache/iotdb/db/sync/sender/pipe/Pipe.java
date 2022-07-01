@@ -107,14 +107,29 @@ public interface Pipe {
    */
   void commit();
 
-  void setDisconnected(boolean disconnected);
-
-  boolean isDisconnected();
-
   // a new pipe should be stop status
   enum PipeStatus {
-    RUNNING,
-    STOP,
-    DROP
+    RUNNING(0),
+    STOP(1),
+    DROP(2);
+
+    private int value;
+
+    PipeStatus(int value) {
+      this.value = value;
+    }
+
+    public int getValue() {
+      return value;
+    }
+
+    public static PipeStatus getByValue(int value) {
+      for (PipeStatus x : values()) {
+        if (x.getValue() == value) {
+          return x;
+        }
+      }
+      return null;
+    }
   }
 }

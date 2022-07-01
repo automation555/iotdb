@@ -18,8 +18,8 @@
  */
 package org.apache.iotdb.db.sync.receiver.recovery;
 
-import org.apache.iotdb.db.sync.conf.SyncConstant;
-import org.apache.iotdb.db.sync.conf.SyncPathUtil;
+import org.apache.iotdb.commons.sync.SyncConstant;
+import org.apache.iotdb.commons.sync.SyncPathUtil;
 import org.apache.iotdb.db.sync.receiver.manager.PipeMessage;
 import org.apache.iotdb.db.sync.sender.pipe.Pipe.PipeStatus;
 
@@ -112,6 +112,16 @@ public class ReceiverLog {
     pipeServerWriter.write(String.format("%s,%s,%d", pipeName, remoteIp, time));
     pipeServerWriter.newLine();
     pipeServerWriter.flush();
+  }
+
+  public void clean() throws IOException {
+    File logFile = new File(SyncPathUtil.getSysDir(), SyncConstant.RECEIVER_LOG_NAME);
+    File msgFile = new File(SyncPathUtil.getSysDir(), SyncConstant.RECEIVER_MSG_LOG_NAME);
+    if (!logFile.getParentFile().exists()) {
+      logFile.getParentFile().mkdirs();
+    }
+    pipeServerWriter = new BufferedWriter(new FileWriter(logFile, false));
+    msgWriter = new BufferedWriter(new FileWriter(msgFile, false));
   }
 
   public void close() throws IOException {
