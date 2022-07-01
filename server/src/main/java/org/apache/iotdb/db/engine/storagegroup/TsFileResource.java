@@ -26,7 +26,6 @@ import org.apache.iotdb.db.engine.modification.ModificationFile;
 import org.apache.iotdb.db.engine.querycontext.ReadOnlyMemChunk;
 import org.apache.iotdb.db.engine.storagegroup.DataRegion.SettleTsFileCallBack;
 import org.apache.iotdb.db.engine.storagegroup.DataRegion.UpgradeTsFileResourceCallBack;
-import org.apache.iotdb.db.engine.storagegroup.TsFileNameGenerator.TsFileName;
 import org.apache.iotdb.db.engine.storagegroup.timeindex.DeviceTimeIndex;
 import org.apache.iotdb.db.engine.storagegroup.timeindex.FileTimeIndex;
 import org.apache.iotdb.db.engine.storagegroup.timeindex.ITimeIndex;
@@ -42,7 +41,6 @@ import org.apache.iotdb.tsfile.file.metadata.ITimeSeriesMetadata;
 import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
 import org.apache.iotdb.tsfile.fileSystem.fsFactory.FSFactory;
 import org.apache.iotdb.tsfile.read.filter.basic.Filter;
-import org.apache.iotdb.tsfile.utils.FilePathUtils;
 import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
 import org.slf4j.Logger;
@@ -62,10 +60,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
 import java.util.Set;
-
-import static org.apache.iotdb.commons.conf.IoTDBConstant.FILE_NAME_SEPARATOR;
-import static org.apache.iotdb.db.engine.storagegroup.TsFileNameGenerator.getTsFileName;
-import static org.apache.iotdb.tsfile.common.constant.TsFileConstant.TSFILE_SUFFIX;
 
 @SuppressWarnings("java:S1135") // ignore todos
 public class TsFileResource {
@@ -127,7 +121,11 @@ public class TsFileResource {
   /** Minimum index of plans executed within this TsFile. */
   protected long minPlanIndex = Long.MAX_VALUE;
 
-  private long version = 0;
+  /** lazy loaded */
+  private long createdTime = Long.MIN_VALUE;
+
+  /** lazy loaded */
+  private long version = Long.MIN_VALUE;
 
   private long ramSize;
 
@@ -170,14 +168,12 @@ public class TsFileResource {
     this.fsFactory = other.fsFactory;
     this.maxPlanIndex = other.maxPlanIndex;
     this.minPlanIndex = other.minPlanIndex;
-    this.version = FilePathUtils.splitAndGetTsFileVersion(this.file.getName());
     this.tsFileSize = other.tsFileSize;
   }
 
   /** for sealed TsFile, call setClosed to close TsFileResource */
   public TsFileResource(File file) {
     this.file = file;
-    this.version = FilePathUtils.splitAndGetTsFileVersion(this.file.getName());
     this.timeIndex = CONFIG.getTimeIndexLevel().getTimeIndex();
     this.timeIndexType = (byte) CONFIG.getTimeIndexLevel().ordinal();
   }
@@ -185,7 +181,6 @@ public class TsFileResource {
   /** unsealed TsFile, for writter */
   public TsFileResource(File file, TsFileProcessor processor) {
     this.file = file;
-    this.version = FilePathUtils.splitAndGetTsFileVersion(this.file.getName());
     this.timeIndex = CONFIG.getTimeIndexLevel().getTimeIndex();
     this.timeIndexType = (byte) CONFIG.getTimeIndexLevel().ordinal();
     this.processor = processor;
@@ -204,7 +199,6 @@ public class TsFileResource {
     this.pathToReadOnlyMemChunkMap.put(path, readOnlyMemChunk);
     this.pathToChunkMetadataListMap.put(path, chunkMetadataList);
     this.originTsFileResource = originTsFileResource;
-    this.version = originTsFileResource.version;
   }
 
   /** unsealed TsFile, for query */
@@ -220,15 +214,6 @@ public class TsFileResource {
     this.pathToChunkMetadataListMap = pathToChunkMetadataListMap;
     generatePathToTimeSeriesMetadataMap();
     this.originTsFileResource = originTsFileResource;
-    this.version = originTsFileResource.version;
-  }
-
-  @TestOnly
-  public TsFileResource(
-      File file, Map<String, Integer> deviceToIndex, long[] startTimes, long[] endTimes) {
-    this.file = file;
-    this.timeIndex = new DeviceTimeIndex(deviceToIndex, startTimes, endTimes);
-    this.timeIndexType = 1;
   }
 
   public synchronized void serialize() throws IOException {
@@ -537,16 +522,82 @@ public class TsFileResource {
   }
 
   void moveTo(File targetDir) {
-    fsFactory.moveFile(file, fsFactory.getFile(targetDir, file.getName()));
-    fsFactory.moveFile(
-        fsFactory.getFile(file.getPath() + RESOURCE_SUFFIX),
-        fsFactory.getFile(targetDir, file.getName() + RESOURCE_SUFFIX));
+    File targetFile = fsFactory.getFile(targetDir, file.getName());
+    // .tsfile file
+    fsFactory.moveFile(file, targetFile);
+    // .resource file
+    File originResourceFile = fsFactory.getFile(file.getPath() + RESOURCE_SUFFIX);
+    if (originResourceFile.exists()) {
+      fsFactory.moveFile(
+          originResourceFile, fsFactory.getFile(targetDir, file.getName() + RESOURCE_SUFFIX));
+    }
+    // .mods file
     File originModFile = fsFactory.getFile(file.getPath() + ModificationFile.FILE_SUFFIX);
     if (originModFile.exists()) {
-      fsFactory.moveFile(
-          originModFile,
-          fsFactory.getFile(targetDir, file.getName() + ModificationFile.FILE_SUFFIX));
+      synchronized (this) {
+        if (modFile != null) {
+          try {
+            modFile.close();
+          } catch (IOException e) {
+            LOGGER.error("Fail to close modification file {}", modFile);
+          }
+          modFile = null;
+        }
+        File targetModFile =
+            fsFactory.getFile(targetDir, file.getName() + ModificationFile.FILE_SUFFIX);
+        fsFactory.moveFile(originModFile, targetModFile);
+      }
     }
+    file = targetFile;
+  }
+
+  void renameTo(String targetFileName) {
+    File dir = file.getParentFile();
+    // .tsfile file
+    File targetFile = fsFactory.getFile(dir, targetFileName);
+    fsFactory.renameTo(file, targetFile);
+    // .resource file
+    File originResourceFile = fsFactory.getFile(file.getPath() + RESOURCE_SUFFIX);
+    if (originResourceFile.exists()) {
+      fsFactory.renameTo(
+          originResourceFile, fsFactory.getFile(dir, targetFileName + RESOURCE_SUFFIX));
+    }
+    // .mods file
+    File originModFile = fsFactory.getFile(file.getPath() + ModificationFile.FILE_SUFFIX);
+    if (originModFile.exists()) {
+      synchronized (this) {
+        if (modFile != null) {
+          try {
+            modFile.close();
+          } catch (IOException e) {
+            LOGGER.error("Fail to close modification file {}", modFile);
+          }
+          modFile = null;
+        }
+        File targetModFile = fsFactory.getFile(dir, targetFileName + ModificationFile.FILE_SUFFIX);
+        fsFactory.renameTo(originModFile, targetModFile);
+      }
+    }
+    // .compaction.mods file
+    File originCompactionModFile =
+        fsFactory.getFile(file.getPath() + ModificationFile.COMPACTION_FILE_SUFFIX);
+    if (originCompactionModFile.exists()) {
+      synchronized (this) {
+        if (compactionModFile != null) {
+          try {
+            compactionModFile.close();
+          } catch (IOException e) {
+            LOGGER.error("Fail to close compaction modification file {}", compactionModFile);
+          }
+          compactionModFile = null;
+        }
+        File newCompactionModFile =
+            fsFactory.getFile(dir, targetFileName + ModificationFile.COMPACTION_FILE_SUFFIX);
+        fsFactory.renameTo(originCompactionModFile, newCompactionModFile);
+      }
+    }
+
+    file = targetFile;
   }
 
   @Override
@@ -591,6 +642,9 @@ public class TsFileResource {
         }
         break;
       case UNCLOSED:
+        // Print a stack trace in a warn statement.
+        RuntimeException e = new RuntimeException();
+        LOGGER.error("Setting the status of a TsFileResource to UNCLOSED", e);
         this.status = TsFileResourceStatus.UNCLOSED;
         break;
       case DELETED:
@@ -845,10 +899,8 @@ public class TsFileResource {
     return newResource;
   }
 
-  public void setModFile(ModificationFile modFile) {
-    synchronized (this) {
-      this.modFile = modFile;
-    }
+  public synchronized void setModFile(ModificationFile modFile) {
+    this.modFile = modFile;
   }
 
   /** @return resource map size */
@@ -894,11 +946,6 @@ public class TsFileResource {
     }
   }
 
-  public static int getInnerCompactionCount(String fileName) throws IOException {
-    TsFileName tsFileName = getTsFileName(fileName);
-    return tsFileName.getInnerCompactionCnt();
-  }
-
   /** For merge, the index range of the new file should be the union of all files' in this merge. */
   public void updatePlanIndexes(TsFileResource another) {
     maxPlanIndex = Math.max(maxPlanIndex, another.maxPlanIndex);
@@ -921,40 +968,37 @@ public class TsFileResource {
     this.minPlanIndex = minPlanIndex;
   }
 
+  public int compareTsFileName(TsFileResource other) {
+    return TsFileName.compareFileName(this, other);
+  }
+
+  /** This method will rename file name of this tsfile */
   public void setVersion(long version) {
+    if (version == getVersion()) {
+      return;
+    }
+    TsFileName tsFileName = TsFileName.parse(file.getName());
     this.version = version;
+    tsFileName.setVersion(version);
+    renameTo(tsFileName.toFileName());
   }
 
   public long getVersion() {
+    if (version == Long.MIN_VALUE) {
+      version = TsFileName.parseVersion(file.getName());
+    }
     return version;
+  }
+
+  public long getCreatedTime() {
+    if (createdTime == Long.MIN_VALUE) {
+      createdTime = TsFileName.parseTime(file.getName());
+    }
+    return createdTime;
   }
 
   public void setTimeIndex(ITimeIndex timeIndex) {
     this.timeIndex = timeIndex;
-  }
-
-  // ({systemTime}-{versionNum}-{innerMergeNum}-{crossMergeNum}.tsfile)
-  public static int compareFileName(TsFileResource o1, TsFileResource o2) {
-    String[] items1 =
-        o1.getTsFile().getName().replace(TSFILE_SUFFIX, "").split(FILE_NAME_SEPARATOR);
-    String[] items2 =
-        o2.getTsFile().getName().replace(TSFILE_SUFFIX, "").split(FILE_NAME_SEPARATOR);
-    long ver1 = Long.parseLong(items1[0]);
-    long ver2 = Long.parseLong(items2[0]);
-    int cmp = Long.compare(ver1, ver2);
-    if (cmp == 0) {
-      int cmpVersion = Long.compare(Long.parseLong(items1[1]), Long.parseLong(items2[1]));
-      if (cmpVersion == 0) {
-        int cmpInnerCompact = Long.compare(Long.parseLong(items1[2]), Long.parseLong(items2[2]));
-        if (cmpInnerCompact == 0) {
-          return Long.compare(Long.parseLong(items1[3]), Long.parseLong(items2[3]));
-        }
-        return cmpInnerCompact;
-      }
-      return cmpVersion;
-    } else {
-      return cmp;
-    }
   }
 
   public void setSeq(boolean seq) {
