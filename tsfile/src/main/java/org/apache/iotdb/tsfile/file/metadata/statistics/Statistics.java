@@ -147,6 +147,8 @@ public abstract class Statistics<T extends Serializable> {
 
   public abstract long getSumLongValue();
 
+  public abstract T getCurrentValue();
+
   /**
    * merge parameter to this statistic
    *
@@ -155,18 +157,16 @@ public abstract class Statistics<T extends Serializable> {
   @SuppressWarnings("unchecked")
   public void mergeStatistics(Statistics<? extends Serializable> stats) {
     if (this.getClass() == stats.getClass()) {
-      if (!stats.isEmpty) {
-        if (stats.startTime < this.startTime) {
-          this.startTime = stats.startTime;
-        }
-        if (stats.endTime > this.endTime) {
-          this.endTime = stats.endTime;
-        }
-        // must be sure no overlap between two statistics
-        this.count += stats.count;
-        mergeStatisticsValue((Statistics<T>) stats);
-        isEmpty = false;
+      if (stats.startTime < this.startTime) {
+        this.startTime = stats.startTime;
       }
+      if (stats.endTime > this.endTime) {
+        this.endTime = stats.endTime;
+      }
+      // must be sure no overlap between two statistics
+      this.count += stats.count;
+      mergeStatisticsValue((Statistics<T>) stats);
+      isEmpty = false;
     } else {
       Class<?> thisClass = this.getClass();
       Class<?> statsClass = stats.getClass();

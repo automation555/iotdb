@@ -19,20 +19,20 @@
 
 package org.apache.iotdb.db.qp.logical.crud;
 
-import org.apache.iotdb.commons.exception.MetadataException;
-import org.apache.iotdb.commons.path.PartialPath;
+import org.apache.iotdb.db.exception.metadata.MetadataException;
 import org.apache.iotdb.db.exception.query.LogicalOperatorException;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
-import org.apache.iotdb.db.mpp.plan.expression.Expression;
-import org.apache.iotdb.db.mpp.plan.expression.ResultColumn;
-import org.apache.iotdb.db.mpp.plan.expression.leaf.TimeSeriesOperand;
-import org.apache.iotdb.db.mpp.plan.expression.multi.FunctionExpression;
+import org.apache.iotdb.db.metadata.path.PartialPath;
 import org.apache.iotdb.db.qp.constant.SQLConstant;
 import org.apache.iotdb.db.qp.physical.PhysicalPlan;
 import org.apache.iotdb.db.qp.physical.crud.AggregationPlan;
 import org.apache.iotdb.db.qp.physical.crud.AlignByDevicePlan;
 import org.apache.iotdb.db.qp.physical.crud.QueryPlan;
 import org.apache.iotdb.db.qp.strategy.PhysicalGenerator;
+import org.apache.iotdb.db.query.expression.Expression;
+import org.apache.iotdb.db.query.expression.ResultColumn;
+import org.apache.iotdb.db.query.expression.unary.FunctionExpression;
+import org.apache.iotdb.db.query.expression.unary.TimeSeriesOperand;
 import org.apache.iotdb.db.utils.SchemaUtils;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 
@@ -79,7 +79,10 @@ public class AggregationQueryOperator extends QueryOperator {
       // Currently, the aggregation function expression can only contain a timeseries operand.
       if (expression instanceof FunctionExpression
           && (expression.getExpressions().size() != 1
-              || !(expression.getExpressions().get(0) instanceof TimeSeriesOperand))) {
+              || !(expression.getExpressions().get(0) instanceof TimeSeriesOperand))
+          && !"current"
+              .equalsIgnoreCase(
+                  String.valueOf(((FunctionExpression) expression).getFunctionName()))) {
         throw new LogicalOperatorException(
             "The argument of the aggregation function must be a time series.");
       }
@@ -109,6 +112,12 @@ public class AggregationQueryOperator extends QueryOperator {
     List<String> aggregations = plan.getDeduplicatedAggregations();
     List<TSDataType> dataTypes = SchemaUtils.getSeriesTypesByPaths(plan.getDeduplicatedPaths());
 
+    // If it is the select current() aggregate function, the data type is text and there are no
+    // parameters
+    if (dataTypes.size() == 0) {
+      dataTypes.add(TSDataType.TEXT);
+    }
+
     for (int i = 0; i < aggregations.size(); i++) {
       if (!verifyIsAggregationDataTypeMatched(aggregations.get(i), dataTypes.get(i))) {
         return false;
@@ -130,6 +139,7 @@ public class AggregationQueryOperator extends QueryOperator {
       case SQLConstant.MAX_TIME:
       case SQLConstant.FIRST_VALUE:
       case SQLConstant.LAST_VALUE:
+      case SQLConstant.CURRENT:
       default:
         return true;
     }
