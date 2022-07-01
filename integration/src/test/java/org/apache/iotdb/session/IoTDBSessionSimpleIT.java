@@ -151,7 +151,7 @@ public class IoTDBSessionSimpleIT {
     values.add("1");
     values.add("1.2");
     values.add("true");
-    values.add("dad");
+    values.add("\"dad\"");
     session.insertRecord(deviceId, 1L, measurements, values);
 
     Set<String> expected = new HashSet<>();
@@ -188,7 +188,7 @@ public class IoTDBSessionSimpleIT {
     values.add("1");
     values.add("1.2");
     values.add("true");
-    values.add("dad");
+    values.add("'dad'");
     try {
       session.insertRecord(deviceId, 1L, measurements, values);
     } catch (Exception e) {
@@ -218,7 +218,7 @@ public class IoTDBSessionSimpleIT {
     values.add("1");
     values.add("1.2");
     values.add("true");
-    values.add("dad");
+    values.add("'dad'");
     try {
       session.insertRecord(deviceId, 1L, measurements, values);
     } catch (Exception e) {
@@ -254,7 +254,7 @@ public class IoTDBSessionSimpleIT {
     values.add(1L);
     values.add(1.2d);
     values.add("true");
-    values.add("dad");
+    values.add("'dad'");
     session.insertRecord(deviceId, 1L, measurements, dataTypes, values);
 
     Set<String> expected = new HashSet<>();
