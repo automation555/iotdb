@@ -19,10 +19,13 @@
 
 package org.apache.iotdb.db.mpp.plan.statement.crud;
 
+import org.apache.iotdb.commons.partition.DataPartition;
+import org.apache.iotdb.commons.partition.RegionReplicaSetInfo;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.mpp.plan.statement.Statement;
 import org.apache.iotdb.db.mpp.plan.statement.StatementVisitor;
 import org.apache.iotdb.tsfile.read.common.TimeRange;
+import org.apache.iotdb.tsfile.utils.Pair;
 
 import java.util.List;
 
@@ -31,6 +34,10 @@ public class DeleteDataStatement extends Statement {
   private List<PartialPath> pathList;
   private long deleteStartTime;
   private long deleteEndTime;
+
+  // used for internal data deletion when executing delete timeseries
+  private List<Pair<RegionReplicaSetInfo, List<PartialPath>>> regionRequestList;
+  private DataPartition dataPartition;
 
   @Override
   public List<? extends PartialPath> getPaths() {
@@ -64,6 +71,23 @@ public class DeleteDataStatement extends Statement {
   public void setTimeRange(TimeRange timeRange) {
     this.deleteStartTime = timeRange.getMin();
     this.deleteEndTime = timeRange.getMax();
+  }
+
+  public List<Pair<RegionReplicaSetInfo, List<PartialPath>>> getRegionRequestList() {
+    return regionRequestList;
+  }
+
+  public void setRegionRequestList(
+      List<Pair<RegionReplicaSetInfo, List<PartialPath>>> regionRequestList) {
+    this.regionRequestList = regionRequestList;
+  }
+
+  public DataPartition getDataPartition() {
+    return dataPartition;
+  }
+
+  public void setDataPartition(DataPartition dataPartition) {
+    this.dataPartition = dataPartition;
   }
 
   @Override
