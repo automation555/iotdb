@@ -18,30 +18,34 @@
  */
 package org.apache.iotdb.db.service.thrift.impl;
 
-import org.apache.iotdb.common.rpc.thrift.TEndPoint;
-import org.apache.iotdb.common.rpc.thrift.TSStatus;
-import org.apache.iotdb.commons.auth.AuthException;
-import org.apache.iotdb.commons.auth.authorizer.IAuthorizer;
-import org.apache.iotdb.commons.conf.IoTDBConstant;
-import org.apache.iotdb.commons.exception.IllegalPathException;
-import org.apache.iotdb.commons.exception.IoTDBException;
-import org.apache.iotdb.commons.exception.MetadataException;
-import org.apache.iotdb.commons.path.PartialPath;
-import org.apache.iotdb.commons.utils.PathUtils;
-import org.apache.iotdb.db.auth.AuthorizerManager;
+import org.apache.iotdb.db.auth.AuthException;
+import org.apache.iotdb.db.auth.authorizer.BasicAuthorizer;
+import org.apache.iotdb.db.auth.authorizer.IAuthorizer;
 import org.apache.iotdb.db.conf.IoTDBConfig;
+import org.apache.iotdb.db.conf.IoTDBConstant;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
 import org.apache.iotdb.db.conf.OperationType;
+import org.apache.iotdb.db.doublelive.OperationSyncConsumer;
+import org.apache.iotdb.db.doublelive.OperationSyncDDLProtector;
+import org.apache.iotdb.db.doublelive.OperationSyncDMLProtector;
+import org.apache.iotdb.db.doublelive.OperationSyncLogService;
+import org.apache.iotdb.db.doublelive.OperationSyncPlanTypeUtils;
+import org.apache.iotdb.db.doublelive.OperationSyncProducer;
+import org.apache.iotdb.db.doublelive.OperationSyncWriteTask;
 import org.apache.iotdb.db.engine.selectinto.InsertTabletPlansIterator;
+import org.apache.iotdb.db.exception.IoTDBException;
 import org.apache.iotdb.db.exception.QueryInBatchStatementException;
 import org.apache.iotdb.db.exception.StorageEngineException;
+import org.apache.iotdb.db.exception.metadata.IllegalPathException;
+import org.apache.iotdb.db.exception.metadata.MetadataException;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
 import org.apache.iotdb.db.metadata.path.MeasurementPath;
+import org.apache.iotdb.db.metadata.path.PartialPath;
 import org.apache.iotdb.db.metadata.template.TemplateQueryType;
 import org.apache.iotdb.db.qp.logical.Operator.OperatorType;
 import org.apache.iotdb.db.qp.physical.PhysicalPlan;
 import org.apache.iotdb.db.qp.physical.crud.DeletePlan;
-import org.apache.iotdb.db.qp.physical.crud.InsertMultiTabletsPlan;
+import org.apache.iotdb.db.qp.physical.crud.InsertMultiTabletPlan;
 import org.apache.iotdb.db.qp.physical.crud.InsertRowPlan;
 import org.apache.iotdb.db.qp.physical.crud.InsertRowsOfOneDevicePlan;
 import org.apache.iotdb.db.qp.physical.crud.InsertRowsPlan;
@@ -63,7 +67,6 @@ import org.apache.iotdb.db.qp.physical.sys.SetTemplatePlan;
 import org.apache.iotdb.db.qp.physical.sys.ShowQueryProcesslistPlan;
 import org.apache.iotdb.db.qp.physical.sys.UnsetTemplatePlan;
 import org.apache.iotdb.db.query.context.QueryContext;
-import org.apache.iotdb.db.query.control.SessionManager;
 import org.apache.iotdb.db.query.control.tracing.TracingConstant;
 import org.apache.iotdb.db.query.dataset.DirectAlignByTimeDataSet;
 import org.apache.iotdb.db.query.dataset.DirectNonAlignDataSet;
@@ -73,15 +76,15 @@ import org.apache.iotdb.db.service.StaticResps;
 import org.apache.iotdb.db.service.basic.BasicOpenSessionResp;
 import org.apache.iotdb.db.service.basic.ServiceProvider;
 import org.apache.iotdb.db.service.metrics.MetricsService;
-import org.apache.iotdb.db.service.metrics.enums.Operation;
+import org.apache.iotdb.db.service.metrics.Operation;
 import org.apache.iotdb.db.tools.watermark.GroupedLSBWatermarkEncoder;
 import org.apache.iotdb.db.tools.watermark.WatermarkEncoder;
 import org.apache.iotdb.db.utils.QueryDataSetUtils;
-import org.apache.iotdb.metrics.config.MetricConfigDescriptor;
 import org.apache.iotdb.metrics.utils.MetricLevel;
 import org.apache.iotdb.rpc.RedirectException;
 import org.apache.iotdb.rpc.RpcUtils;
 import org.apache.iotdb.rpc.TSStatusCode;
+import org.apache.iotdb.service.rpc.thrift.EndPoint;
 import org.apache.iotdb.service.rpc.thrift.ServerProperties;
 import org.apache.iotdb.service.rpc.thrift.TSAppendSchemaTemplateReq;
 import org.apache.iotdb.service.rpc.thrift.TSCancelOperationReq;
@@ -101,6 +104,7 @@ import org.apache.iotdb.service.rpc.thrift.TSFetchMetadataResp;
 import org.apache.iotdb.service.rpc.thrift.TSFetchResultsReq;
 import org.apache.iotdb.service.rpc.thrift.TSFetchResultsResp;
 import org.apache.iotdb.service.rpc.thrift.TSGetTimeZoneResp;
+import org.apache.iotdb.service.rpc.thrift.TSIService;
 import org.apache.iotdb.service.rpc.thrift.TSInsertRecordReq;
 import org.apache.iotdb.service.rpc.thrift.TSInsertRecordsOfOneDeviceReq;
 import org.apache.iotdb.service.rpc.thrift.TSInsertRecordsReq;
@@ -112,6 +116,7 @@ import org.apache.iotdb.service.rpc.thrift.TSInsertTabletsReq;
 import org.apache.iotdb.service.rpc.thrift.TSLastDataQueryReq;
 import org.apache.iotdb.service.rpc.thrift.TSOpenSessionReq;
 import org.apache.iotdb.service.rpc.thrift.TSOpenSessionResp;
+import org.apache.iotdb.service.rpc.thrift.TSOperationSyncWriteReq;
 import org.apache.iotdb.service.rpc.thrift.TSPruneSchemaTemplateReq;
 import org.apache.iotdb.service.rpc.thrift.TSQueryDataSet;
 import org.apache.iotdb.service.rpc.thrift.TSQueryNonAlignDataSet;
@@ -120,8 +125,10 @@ import org.apache.iotdb.service.rpc.thrift.TSQueryTemplateResp;
 import org.apache.iotdb.service.rpc.thrift.TSRawDataQueryReq;
 import org.apache.iotdb.service.rpc.thrift.TSSetSchemaTemplateReq;
 import org.apache.iotdb.service.rpc.thrift.TSSetTimeZoneReq;
+import org.apache.iotdb.service.rpc.thrift.TSStatus;
 import org.apache.iotdb.service.rpc.thrift.TSTracingInfo;
 import org.apache.iotdb.service.rpc.thrift.TSUnsetSchemaTemplateReq;
+import org.apache.iotdb.session.pool.SessionPool;
 import org.apache.iotdb.tsfile.exception.filter.QueryFilterOptimizationException;
 import org.apache.iotdb.tsfile.exception.write.UnSupportedDataTypeException;
 import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
@@ -129,11 +136,14 @@ import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.read.query.dataset.QueryDataSet;
+import org.apache.iotdb.tsfile.utils.Pair;
 
 import org.apache.thrift.TException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.sql.SQLException;
@@ -144,6 +154,8 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Future;
 import java.util.stream.Collectors;
@@ -153,6 +165,7 @@ import static org.apache.iotdb.db.service.basic.ServiceProvider.CONFIG;
 import static org.apache.iotdb.db.service.basic.ServiceProvider.CURRENT_RPC_VERSION;
 import static org.apache.iotdb.db.service.basic.ServiceProvider.QUERY_FREQUENCY_RECORDER;
 import static org.apache.iotdb.db.service.basic.ServiceProvider.QUERY_TIME_MANAGER;
+import static org.apache.iotdb.db.service.basic.ServiceProvider.SESSION_MANAGER;
 import static org.apache.iotdb.db.service.basic.ServiceProvider.SLOW_SQL_LOGGER;
 import static org.apache.iotdb.db.service.basic.ServiceProvider.TRACING_MANAGER;
 import static org.apache.iotdb.db.utils.ErrorHandlingUtils.onIoTDBException;
@@ -161,13 +174,11 @@ import static org.apache.iotdb.db.utils.ErrorHandlingUtils.onNonQueryException;
 import static org.apache.iotdb.db.utils.ErrorHandlingUtils.onQueryException;
 
 /** Thrift RPC implementation at server side. */
-public class TSServiceImpl implements IClientRPCServiceWithHandler {
+public class TSServiceImpl implements TSIService.Iface {
 
-  private static final SessionManager SESSION_MANAGER = SessionManager.getInstance();
+  protected class QueryTask implements Callable<TSExecuteStatementResp> {
 
-  private class QueryTask implements Callable<TSExecuteStatementResp> {
-
-    private final PhysicalPlan plan;
+    private PhysicalPlan plan;
     private final long queryStartTime;
     private final long sessionId;
     private final String statement;
@@ -207,6 +218,10 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     public TSExecuteStatementResp call() throws Exception {
       String username = SESSION_MANAGER.getUsername(sessionId);
       plan.setLoginUserName(username);
+      TSStatus status = serviceProvider.checkAuthority(plan, sessionId);
+      if (status != null) {
+        return new TSExecuteStatementResp(status);
+      }
 
       QUERY_FREQUENCY_RECORDER.incrementAndGet();
       AUDIT_LOGGER.debug("Session {} execute Query: {}", sessionId, statement);
@@ -241,7 +256,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     }
   }
 
-  private class FetchResultsTask implements Callable<TSFetchResultsResp> {
+  protected class FetchResultsTask implements Callable<TSFetchResultsResp> {
 
     private final long sessionId;
     private final long queryId;
@@ -305,16 +320,70 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   protected final ServiceProvider serviceProvider;
 
+  /* OperationSync module */
+  private static final boolean isEnableOperationSync =
+      IoTDBDescriptor.getInstance().getConfig().isEnableOperationSync();
+  private final SessionPool operationSyncsessionPool;
+  private final OperationSyncProducer operationSyncProducer;
+  private final OperationSyncDDLProtector operationSyncDDLProtector;
+  private final OperationSyncLogService operationSyncDDLLogService;
+
   public TSServiceImpl() {
     super();
     serviceProvider = IoTDB.serviceProvider;
+
+    if (isEnableOperationSync) {
+      /* Open OperationSync */
+      IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
+      // create SessionPool for OperationSync
+      operationSyncsessionPool =
+          new SessionPool(
+              config.getSecondaryAddress(),
+              config.getSecondaryPort(),
+              config.getSecondaryUser(),
+              config.getSecondaryPassword(),
+              5);
+
+      // create operationSyncDDLProtector and operationSyncDDLLogService
+      operationSyncDDLProtector = new OperationSyncDDLProtector(operationSyncsessionPool);
+      new Thread(operationSyncDDLProtector).start();
+      operationSyncDDLLogService =
+          new OperationSyncLogService("OperationSyncDDLLog", operationSyncDDLProtector);
+      new Thread(operationSyncDDLLogService).start();
+
+      // create OperationSyncProducer
+      BlockingQueue<Pair<ByteBuffer, OperationSyncPlanTypeUtils.OperationSyncPlanType>>
+          blockingQueue = new ArrayBlockingQueue<>(config.getOperationSyncProducerCacheSize());
+      operationSyncProducer = new OperationSyncProducer(blockingQueue);
+
+      // create OperationSyncDMLProtector and OperationSyncDMLLogService
+      OperationSyncDMLProtector operationSyncDMLProtector =
+          new OperationSyncDMLProtector(operationSyncDDLProtector, operationSyncProducer);
+      new Thread(operationSyncDMLProtector).start();
+      OperationSyncLogService operationSyncDMLLogService =
+          new OperationSyncLogService("OperationSyncDMLLog", operationSyncDMLProtector);
+      new Thread(operationSyncDMLLogService).start();
+
+      // create OperationSyncConsumer
+      for (int i = 0; i < config.getOperationSyncConsumerConcurrencySize(); i++) {
+        OperationSyncConsumer consumer =
+            new OperationSyncConsumer(
+                blockingQueue, operationSyncsessionPool, operationSyncDMLLogService);
+        new Thread(consumer).start();
+      }
+    } else {
+      operationSyncsessionPool = null;
+      operationSyncProducer = null;
+      operationSyncDDLProtector = null;
+      operationSyncDDLLogService = null;
+    }
   }
 
   @Override
   public TSOpenSessionResp openSession(TSOpenSessionReq req) throws TException {
     IoTDBConstant.ClientVersion clientVersion = parseClientVersion(req);
     BasicOpenSessionResp openSessionResp =
-        SESSION_MANAGER.openSession(
+        serviceProvider.openSession(
             req.username, req.password, req.zoneId, req.client_protocol, clientVersion);
     TSStatus tsStatus = RpcUtils.getStatus(openSessionResp.getCode(), openSessionResp.getMessage());
     TSOpenSessionResp resp = new TSOpenSessionResp(tsStatus, CURRENT_RPC_VERSION);
@@ -332,7 +401,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus closeSession(TSCloseSessionReq req) {
     return new TSStatus(
-        !SESSION_MANAGER.closeSession(req.sessionId)
+        !serviceProvider.closeSession(req.sessionId)
             ? RpcUtils.getStatus(TSStatusCode.NOT_LOGIN_ERROR)
             : RpcUtils.getStatus(TSStatusCode.SUCCESS_STATUS));
   }
@@ -345,7 +414,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus closeOperation(TSCloseOperationReq req) {
-    return SESSION_MANAGER.closeOperation(
+    return serviceProvider.closeOperation(
         req.sessionId, req.queryId, req.statementId, req.isSetStatementId(), req.isSetQueryId());
   }
 
@@ -353,7 +422,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   public TSFetchMetadataResp fetchMetadata(TSFetchMetadataReq req) {
     TSFetchMetadataResp resp = new TSFetchMetadataResp();
 
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return resp.setStatus(getNotLoggedInStatus());
     }
 
@@ -361,7 +430,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     try {
       switch (req.getType()) {
         case "METADATA_IN_JSON":
-          resp.setMetadataInJson(IoTDB.schemaProcessor.getMetadataInString());
+          resp.setMetadataInJson(IoTDB.metaManager.getMetadataInString());
           status = RpcUtils.getStatus(TSStatusCode.SUCCESS_STATUS);
           break;
         case "COLUMN":
@@ -392,11 +461,11 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   }
 
   protected List<MeasurementPath> getPaths(PartialPath path) throws MetadataException {
-    return IoTDB.schemaProcessor.getMeasurementPaths(path);
+    return IoTDB.metaManager.getMeasurementPaths(path);
   }
 
   protected TSDataType getSeriesTypeByPath(PartialPath path) throws MetadataException {
-    return IoTDB.schemaProcessor.getSeriesType(path);
+    return IoTDB.metaManager.getSeriesType(path);
   }
 
   private boolean executeInsertRowsPlan(InsertRowsPlan insertRowsPlan, List<TSStatus> result) {
@@ -499,7 +568,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     long t1 = System.currentTimeMillis();
     List<TSStatus> result = new ArrayList<>();
     boolean isAllSuccessful = true;
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return getNotLoggedInStatus();
     }
 
@@ -531,7 +600,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
             index = 0;
           }
 
-          TSStatus status = SESSION_MANAGER.checkAuthority(physicalPlan, req.getSessionId());
+          TSStatus status = serviceProvider.checkAuthority(physicalPlan, req.getSessionId());
           if (status != null) {
             insertRowsPlan.getResults().put(index, status);
             isAllSuccessful = false;
@@ -553,7 +622,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
             multiPlan = new CreateMultiTimeSeriesPlan();
             executeList.add(multiPlan);
           }
-          TSStatus status = SESSION_MANAGER.checkAuthority(physicalPlan, req.getSessionId());
+          TSStatus status = serviceProvider.checkAuthority(physicalPlan, req.getSessionId());
           if (status != null) {
             multiPlan.getResults().put(i, status);
             isAllSuccessful = false;
@@ -605,7 +674,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   public TSExecuteStatementResp executeStatement(TSExecuteStatementReq req) {
     String statement = req.getStatement();
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return RpcUtils.getTSExecuteStatementResp(getNotLoggedInStatus());
       }
 
@@ -643,7 +712,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSExecuteStatementResp executeQueryStatement(TSExecuteStatementReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return RpcUtils.getTSExecuteStatementResp(getNotLoggedInStatus());
       }
 
@@ -679,7 +748,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSExecuteStatementResp executeRawDataQuery(TSRawDataQueryReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return RpcUtils.getTSExecuteStatementResp(getNotLoggedInStatus());
       }
 
@@ -725,7 +794,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSExecuteStatementResp executeLastDataQuery(TSLastDataQueryReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return RpcUtils.getTSExecuteStatementResp(getNotLoggedInStatus());
       }
 
@@ -799,7 +868,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     List<? extends PartialPath> authPaths = plan.getAuthPaths();
     if (authPaths != null
         && !authPaths.isEmpty()
-        && !SESSION_MANAGER.checkAuthorization(plan, username)) {
+        && !serviceProvider.checkAuthorization(plan, username)) {
       return RpcUtils.getTSExecuteStatementResp(
           RpcUtils.getStatus(
               TSStatusCode.NO_PERMISSION_ERROR,
@@ -845,7 +914,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
         resp.setQueryDataSet(tsQueryDataSet);
       } catch (RedirectException e) {
         if (plan.isEnableRedirect()) {
-          TEndPoint endPoint = e.getEndPoint();
+          EndPoint endPoint = e.getEndPoint();
           return redirectQueryToAnotherNode(resp, context, endPoint.ip, endPoint.port);
         } else {
           LOGGER.error(
@@ -905,7 +974,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
         ip,
         port);
     TSStatus status = new TSStatus();
-    status.setRedirectNode(new TEndPoint(ip, port));
+    status.setRedirectNode(new EndPoint(ip, port));
     status.setCode(TSStatusCode.NEED_REDIRECTION.getStatusCode());
     resp.setStatus(status);
     resp.setQueryId(context.getQueryId());
@@ -921,7 +990,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
       long sessionId)
       throws IoTDBException, TException, SQLException, IOException, InterruptedException,
           QueryFilterOptimizationException {
-    TSStatus status = SESSION_MANAGER.checkAuthority(physicalPlan, sessionId);
+    TSStatus status = serviceProvider.checkAuthority(physicalPlan, sessionId);
     if (status != null) {
       return new TSExecuteStatementResp(status);
     }
@@ -974,26 +1043,26 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   private TSStatus insertTabletsInternally(
       List<InsertTabletPlan> insertTabletPlans, long sessionId) {
-    InsertMultiTabletsPlan insertMultiTabletsPlan = new InsertMultiTabletsPlan();
+    InsertMultiTabletPlan insertMultiTabletPlan = new InsertMultiTabletPlan();
     for (int i = 0; i < insertTabletPlans.size(); i++) {
       InsertTabletPlan insertTabletPlan = insertTabletPlans.get(i);
-      TSStatus status = SESSION_MANAGER.checkAuthority(insertTabletPlan, sessionId);
+      TSStatus status = serviceProvider.checkAuthority(insertTabletPlan, sessionId);
 
       if (status != null) {
         // not authorized
-        insertMultiTabletsPlan.getResults().put(i, status);
+        insertMultiTabletPlan.getResults().put(i, status);
       }
     }
-    insertMultiTabletsPlan.setInsertTabletPlanList(insertTabletPlans);
+    insertMultiTabletPlan.setInsertTabletPlanList(insertTabletPlans);
 
-    return executeNonQueryPlan(insertMultiTabletsPlan);
+    return executeNonQueryPlan(insertMultiTabletPlan);
   }
 
   @SuppressWarnings("squid:S3776") // Suppress high Cognitive Complexity warning
   @Override
   public TSFetchResultsResp fetchResults(TSFetchResultsReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return RpcUtils.getTSFetchResultsResp(getNotLoggedInStatus());
       }
 
@@ -1036,7 +1105,12 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   }
 
   private WatermarkEncoder getWatermarkEncoder(String userName) throws TException, AuthException {
-    IAuthorizer authorizer = AuthorizerManager.getInstance();
+    IAuthorizer authorizer;
+    try {
+      authorizer = BasicAuthorizer.getInstance();
+    } catch (AuthException e) {
+      throw new TException(e);
+    }
 
     WatermarkEncoder encoder = null;
     if (CONFIG.isEnableWatermark() && authorizer.isUserUseWaterMark(userName)) {
@@ -1054,7 +1128,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   /** update statement can be: 1. select-into statement 2. non-query statement */
   @Override
   public TSExecuteStatementResp executeUpdateStatement(TSExecuteStatementReq req) {
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return RpcUtils.getTSExecuteStatementResp(getNotLoggedInStatus());
     }
 
@@ -1105,14 +1179,13 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   }
 
   private TSExecuteStatementResp executeNonQueryStatement(PhysicalPlan plan, long sessionId) {
-    TSStatus status = SESSION_MANAGER.checkAuthority(plan, sessionId);
+    TSStatus status = serviceProvider.checkAuthority(plan, sessionId);
     return status != null
         ? new TSExecuteStatementResp(status)
         : RpcUtils.getTSExecuteStatementResp(executeNonQueryPlan(plan))
             .setQueryId(SESSION_MANAGER.requestQueryId(false));
   }
 
-  @Override
   public void handleClientExit() {
     Long sessionId = SESSION_MANAGER.getCurrSessionId();
     if (sessionId != null) {
@@ -1175,7 +1248,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus insertRecords(TSInsertRecordsReq req) {
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return getNotLoggedInStatus();
     }
 
@@ -1187,12 +1260,9 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
           req.getTimestamps().get(0));
     }
     boolean allCheckSuccess = true;
-
     InsertRowsPlan insertRowsPlan = new InsertRowsPlan();
     for (int i = 0; i < req.prefixPaths.size(); i++) {
       try {
-        // check whether measurement is legal according to syntax convention
-        PathUtils.isLegalSingleMeasurements(req.getMeasurementsList().get(i));
         InsertRowPlan plan =
             new InsertRowPlan(
                 new PartialPath(req.getPrefixPaths().get(i)),
@@ -1200,7 +1270,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
                 req.getMeasurementsList().get(i).toArray(new String[0]),
                 req.valuesList.get(i),
                 req.isAligned);
-        TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+        TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
         if (status != null) {
           insertRowsPlan.getResults().put(i, status);
           allCheckSuccess = false;
@@ -1250,7 +1320,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus insertRecordsOfOneDevice(TSInsertRecordsOfOneDeviceReq req) {
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return getNotLoggedInStatus();
     }
 
@@ -1264,8 +1334,6 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
     List<TSStatus> statusList = new ArrayList<>();
     try {
-      // check whether measurement is legal according to syntax convention
-      PathUtils.isLegalSingleMeasurementLists(req.getMeasurementsList());
       InsertRowsOfOneDevicePlan plan =
           new InsertRowsOfOneDevicePlan(
               new PartialPath(req.getPrefixPath()),
@@ -1273,7 +1341,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
               req.getMeasurementsList(),
               req.getValuesList(),
               req.isAligned);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
       statusList.add(status != null ? status : executeNonQueryPlan(plan));
     } catch (IoTDBException e) {
       statusList.add(
@@ -1298,7 +1366,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus insertStringRecordsOfOneDevice(TSInsertStringRecordsOfOneDeviceReq req) {
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return getNotLoggedInStatus();
     }
 
@@ -1315,15 +1383,13 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     for (int i = 0; i < req.timestamps.size(); i++) {
       InsertRowPlan plan = new InsertRowPlan();
       try {
-        // check whether measurement is legal according to syntax convention
-        PathUtils.isLegalSingleMeasurements(req.getMeasurementsList().get(i));
         plan.setDevicePath(new PartialPath(req.getPrefixPath()));
         plan.setTime(req.getTimestamps().get(i));
         addMeasurementAndValue(plan, req.getMeasurementsList().get(i), req.getValuesList().get(i));
         plan.setDataTypes(new TSDataType[plan.getMeasurements().length]);
         plan.setNeedInferType(true);
         plan.setAligned(req.isAligned);
-        TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+        TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
 
         if (status != null) {
           insertRowsPlan.getResults().put(i, status);
@@ -1358,7 +1424,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus insertStringRecords(TSInsertStringRecordsReq req) {
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return getNotLoggedInStatus();
     }
 
@@ -1375,15 +1441,13 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     for (int i = 0; i < req.prefixPaths.size(); i++) {
       InsertRowPlan plan = new InsertRowPlan();
       try {
-        // check whether measurement is legal according to syntax convention
-        PathUtils.isLegalSingleMeasurements(req.getMeasurementsList().get(i));
         plan.setDevicePath(new PartialPath(req.getPrefixPaths().get(i)));
         plan.setTime(req.getTimestamps().get(i));
         addMeasurementAndValue(plan, req.getMeasurementsList().get(i), req.getValuesList().get(i));
         plan.setDataTypes(new TSDataType[plan.getMeasurements().length]);
         plan.setNeedInferType(true);
         plan.setAligned(req.isAligned);
-        TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+        TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
 
         if (status != null) {
           insertRowsPlan.getResults().put(i, status);
@@ -1474,7 +1538,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus insertRecord(TSInsertRecordReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
 
@@ -1484,10 +1548,6 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
           req.getPrefixPath(),
           req.getTimestamp());
 
-      // check whether measurement is legal according to syntax convention
-
-      PathUtils.isLegalSingleMeasurements(req.getMeasurements());
-
       InsertRowPlan plan =
           new InsertRowPlan(
               new PartialPath(req.getPrefixPath()),
@@ -1495,8 +1555,13 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
               req.getMeasurements().toArray(new String[0]),
               req.values,
               req.isAligned);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
-      return status != null ? status : executeNonQueryPlan(plan);
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
+
+      if (status != null) {
+        return status;
+      }
+
+      return executeNonQueryPlan(plan);
     } catch (IoTDBException e) {
       return onIoTDBException(e, OperationType.INSERT_RECORD, e.getErrorCode());
     } catch (Exception e) {
@@ -1508,7 +1573,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus insertStringRecord(TSInsertStringRecordReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
 
@@ -1518,9 +1583,6 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
           req.getPrefixPath(),
           req.getTimestamp());
 
-      // check whether measurement is legal according to syntax convention
-      PathUtils.isLegalSingleMeasurements(req.getMeasurements());
-
       InsertRowPlan plan = new InsertRowPlan();
       plan.setDevicePath(new PartialPath(req.getPrefixPath()));
       plan.setTime(req.getTimestamp());
@@ -1529,8 +1591,13 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
       plan.setValues(req.getValues().toArray(new Object[0]));
       plan.setNeedInferType(true);
       plan.setAligned(req.isAligned);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
-      return status != null ? status : executeNonQueryPlan(plan);
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
+
+      if (status != null) {
+        return status;
+      }
+
+      return executeNonQueryPlan(plan);
     } catch (IoTDBException e) {
       return onIoTDBException(e, OperationType.INSERT_STRING_RECORD, e.getErrorCode());
     } catch (Exception e) {
@@ -1542,7 +1609,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus deleteData(TSDeleteDataReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
 
@@ -1554,7 +1621,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
         paths.add(new PartialPath(path));
       }
       plan.addPaths(paths);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
 
       return status != null ? new TSStatus(status) : new TSStatus(executeNonQueryPlan(plan));
     } catch (IoTDBException e) {
@@ -1569,28 +1636,28 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   public TSStatus insertTablet(TSInsertTabletReq req) {
     long t1 = System.currentTimeMillis();
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
-
-      // check whether measurement is legal according to syntax convention
-
-      PathUtils.isLegalSingleMeasurements(req.getMeasurements());
 
       InsertTabletPlan insertTabletPlan =
           new InsertTabletPlan(new PartialPath(req.getPrefixPath()), req.measurements);
       insertTabletPlan.setTimes(QueryDataSetUtils.readTimesFromBuffer(req.timestamps, req.size));
       insertTabletPlan.setColumns(
-          QueryDataSetUtils.readTabletValuesFromBuffer(
+          QueryDataSetUtils.readValuesFromBuffer(
               req.values, req.types, req.types.size(), req.size));
       insertTabletPlan.setBitMaps(
           QueryDataSetUtils.readBitMapsFromBuffer(req.values, req.types.size(), req.size));
       insertTabletPlan.setRowCount(req.size);
       insertTabletPlan.setDataTypes(req.types);
       insertTabletPlan.setAligned(req.isAligned);
-      TSStatus status = SESSION_MANAGER.checkAuthority(insertTabletPlan, req.getSessionId());
+      TSStatus status = serviceProvider.checkAuthority(insertTabletPlan, req.getSessionId());
 
-      return status != null ? status : executeNonQueryPlan(insertTabletPlan);
+      if (status != null) {
+        return status;
+      }
+
+      return executeNonQueryPlan(insertTabletPlan);
     } catch (IoTDBException e) {
       return onIoTDBException(e, OperationType.INSERT_TABLET, e.getErrorCode());
     } catch (Exception e) {
@@ -1605,7 +1672,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   public TSStatus insertTablets(TSInsertTabletsReq req) {
     long t1 = System.currentTimeMillis();
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
 
@@ -1624,15 +1691,13 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   }
 
   private InsertTabletPlan constructInsertTabletPlan(TSInsertTabletsReq req, int i)
-      throws MetadataException {
-    // check whether measurement is legal according to syntax convention
-    PathUtils.isLegalSingleMeasurementLists(req.getMeasurementsList());
+      throws IllegalPathException {
     InsertTabletPlan insertTabletPlan =
         new InsertTabletPlan(new PartialPath(req.prefixPaths.get(i)), req.measurementsList.get(i));
     insertTabletPlan.setTimes(
         QueryDataSetUtils.readTimesFromBuffer(req.timestampsList.get(i), req.sizeList.get(i)));
     insertTabletPlan.setColumns(
-        QueryDataSetUtils.readTabletValuesFromBuffer(
+        QueryDataSetUtils.readValuesFromBuffer(
             req.valuesList.get(i),
             req.typesList.get(i),
             req.measurementsList.get(i).size(),
@@ -1646,33 +1711,33 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     return insertTabletPlan;
   }
 
-  /** construct one InsertMultiTabletsPlan and process it */
-  public TSStatus insertTabletsInternally(TSInsertTabletsReq req) throws MetadataException {
+  /** construct one InsertMultiTabletPlan and process it */
+  public TSStatus insertTabletsInternally(TSInsertTabletsReq req) throws IllegalPathException {
     List<InsertTabletPlan> insertTabletPlanList = new ArrayList<>();
-    InsertMultiTabletsPlan insertMultiTabletsPlan = new InsertMultiTabletsPlan();
+    InsertMultiTabletPlan insertMultiTabletPlan = new InsertMultiTabletPlan();
     for (int i = 0; i < req.prefixPaths.size(); i++) {
       InsertTabletPlan insertTabletPlan = constructInsertTabletPlan(req, i);
-      TSStatus status = SESSION_MANAGER.checkAuthority(insertTabletPlan, req.getSessionId());
+      TSStatus status = serviceProvider.checkAuthority(insertTabletPlan, req.getSessionId());
       if (status != null) {
         // not authorized
-        insertMultiTabletsPlan.getResults().put(i, status);
+        insertMultiTabletPlan.getResults().put(i, status);
       }
       insertTabletPlanList.add(insertTabletPlan);
     }
 
-    insertMultiTabletsPlan.setInsertTabletPlanList(insertTabletPlanList);
-    return executeNonQueryPlan(insertMultiTabletsPlan);
+    insertMultiTabletPlan.setInsertTabletPlanList(insertTabletPlanList);
+    return executeNonQueryPlan(insertMultiTabletPlan);
   }
 
   @Override
   public TSStatus setStorageGroup(long sessionId, String storageGroup) {
     try {
-      if (!SESSION_MANAGER.checkLogin(sessionId)) {
+      if (!serviceProvider.checkLogin(sessionId)) {
         return getNotLoggedInStatus();
       }
 
       SetStorageGroupPlan plan = new SetStorageGroupPlan(new PartialPath(storageGroup));
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, sessionId);
+      TSStatus status = serviceProvider.checkAuthority(plan, sessionId);
 
       return status != null ? status : executeNonQueryPlan(plan);
     } catch (IoTDBException e) {
@@ -1686,7 +1751,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus deleteStorageGroups(long sessionId, List<String> storageGroups) {
     try {
-      if (!SESSION_MANAGER.checkLogin(sessionId)) {
+      if (!serviceProvider.checkLogin(sessionId)) {
         return getNotLoggedInStatus();
       }
 
@@ -1695,7 +1760,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
         storageGroupList.add(new PartialPath(storageGroup));
       }
       DeleteStorageGroupPlan plan = new DeleteStorageGroupPlan(storageGroupList);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, sessionId);
+      TSStatus status = serviceProvider.checkAuthority(plan, sessionId);
       return status != null ? status : executeNonQueryPlan(plan);
     } catch (IoTDBException e) {
       return onIoTDBException(e, OperationType.DELETE_STORAGE_GROUPS, e.getErrorCode());
@@ -1708,7 +1773,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus createTimeseries(TSCreateTimeseriesReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
 
@@ -1717,8 +1782,6 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
             "Session-{} create timeseries {}", SESSION_MANAGER.getCurrSessionId(), req.getPath());
       }
 
-      // measurementAlias is also a nodeName
-      PathUtils.isLegalSingleMeasurements(Collections.singletonList(req.getMeasurementAlias()));
       CreateTimeSeriesPlan plan =
           new CreateTimeSeriesPlan(
               new PartialPath(req.path),
@@ -1729,7 +1792,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
               req.tags,
               req.attributes,
               req.measurementAlias);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
       return status != null ? status : executeNonQueryPlan(plan);
     } catch (IoTDBException e) {
       return onIoTDBException(e, OperationType.CREATE_TIMESERIES, e.getErrorCode());
@@ -1742,7 +1805,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus createAlignedTimeseries(TSCreateAlignedTimeseriesReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
 
@@ -1756,12 +1819,6 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
                 req.encodings.get(0),
                 req.compressors.get(0)));
       }
-
-      // check whether measurement is legal according to syntax convention
-
-      PathUtils.isLegalSingleMeasurements(req.getMeasurements());
-
-      PathUtils.isLegalSingleMeasurements(req.getMeasurementAlias());
 
       if (AUDIT_LOGGER.isDebugEnabled()) {
         AUDIT_LOGGER.debug(
@@ -1791,10 +1848,8 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
               dataTypes,
               encodings,
               compressors,
-              req.measurementAlias,
-              req.tagsList,
-              req.attributesList);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+              req.measurementAlias);
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
       return status != null ? status : executeNonQueryPlan(plan);
     } catch (IoTDBException e) {
       return onIoTDBException(e, OperationType.CREATE_ALIGNED_TIMESERIES, e.getErrorCode());
@@ -1808,7 +1863,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus createMultiTimeseries(TSCreateMultiTimeseriesReq req) {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
 
@@ -1819,10 +1874,6 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
             req.getPaths().size(),
             req.getPaths().get(0));
       }
-
-      // measurementAlias is also a nodeName
-
-      PathUtils.isLegalSingleMeasurements(req.measurementAliasList);
 
       CreateMultiTimeSeriesPlan multiPlan = new CreateMultiTimeSeriesPlan();
       List<PartialPath> paths = new ArrayList<>(req.paths.size());
@@ -1850,7 +1901,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
       CreateTimeSeriesPlan plan = new CreateTimeSeriesPlan();
       for (int i = 0; i < req.paths.size(); i++) {
         plan.setPath(new PartialPath(req.paths.get(i)));
-        TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+        TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
         if (status != null) {
           // not authorized
           multiPlan.getResults().put(i, status);
@@ -1899,7 +1950,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus deleteTimeseries(long sessionId, List<String> paths) {
     try {
-      if (!SESSION_MANAGER.checkLogin(sessionId)) {
+      if (!serviceProvider.checkLogin(sessionId)) {
         return getNotLoggedInStatus();
       }
 
@@ -1908,7 +1959,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
         pathList.add(new PartialPath(path));
       }
       DeleteTimeSeriesPlan plan = new DeleteTimeSeriesPlan(pathList);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, sessionId);
+      TSStatus status = serviceProvider.checkAuthority(plan, sessionId);
       return status != null ? status : executeNonQueryPlan(plan);
     } catch (IoTDBException e) {
       return onIoTDBException(e, OperationType.DELETE_TIMESERIES, e.getErrorCode());
@@ -1926,7 +1977,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   @Override
   public TSStatus createSchemaTemplate(TSCreateSchemaTemplateReq req) throws TException {
     try {
-      if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+      if (!serviceProvider.checkLogin(req.getSessionId())) {
         return getNotLoggedInStatus();
       }
 
@@ -1941,13 +1992,9 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
       // Construct plan from serialized request
       ByteBuffer buffer = ByteBuffer.wrap(req.getSerializedTemplate());
       plan = CreateTemplatePlan.deserializeFromReq(buffer);
-      // check whether measurement is legal according to syntax convention
-      PathUtils.isLegalMeasurementLists(plan.getMeasurements());
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
 
       return status != null ? status : executeNonQueryPlan(plan);
-    } catch (IoTDBException e) {
-      return onIoTDBException(e, OperationType.CREATE_SCHEMA_TEMPLATE, e.getErrorCode());
     } catch (Exception e) {
       return onNPEOrUnexpectedException(
           e, OperationType.CREATE_SCHEMA_TEMPLATE, TSStatusCode.EXECUTE_STATEMENT_ERROR);
@@ -1956,13 +2003,6 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus appendSchemaTemplate(TSAppendSchemaTemplateReq req) {
-    try {
-      // check whether measurement is legal according to syntax convention
-      PathUtils.isLegalMeasurements(req.getMeasurements());
-    } catch (IoTDBException e) {
-      onIoTDBException(e, OperationType.EXECUTE_NON_QUERY_PLAN, e.getErrorCode());
-    }
-
     int size = req.getMeasurementsSize();
     String[] measurements = new String[size];
     TSDataType[] dataTypes = new TSDataType[size];
@@ -1979,7 +2019,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     AppendTemplatePlan plan =
         new AppendTemplatePlan(
             req.getName(), req.isAligned, measurements, dataTypes, encodings, compressionTypes);
-    TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+    TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
     return status != null ? status : executeNonQueryPlan(plan);
   }
 
@@ -1987,7 +2027,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
   public TSStatus pruneSchemaTemplate(TSPruneSchemaTemplateReq req) {
     PruneTemplatePlan plan =
         new PruneTemplatePlan(req.getName(), Collections.singletonList(req.getPath()));
-    TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+    TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
     return status != null ? status : executeNonQueryPlan(plan);
   }
 
@@ -1999,36 +2039,36 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
       switch (TemplateQueryType.values()[req.getQueryType()]) {
         case COUNT_MEASUREMENTS:
           resp.setQueryType(TemplateQueryType.COUNT_MEASUREMENTS.ordinal());
-          resp.setCount(IoTDB.schemaProcessor.countMeasurementsInTemplate(req.name));
+          resp.setCount(IoTDB.metaManager.countMeasurementsInTemplate(req.name));
           break;
         case IS_MEASUREMENT:
           path = req.getMeasurement();
           resp.setQueryType(TemplateQueryType.IS_MEASUREMENT.ordinal());
-          resp.setResult(IoTDB.schemaProcessor.isMeasurementInTemplate(req.name, path));
+          resp.setResult(IoTDB.metaManager.isMeasurementInTemplate(req.name, path));
           break;
         case PATH_EXIST:
           path = req.getMeasurement();
           resp.setQueryType(TemplateQueryType.PATH_EXIST.ordinal());
-          resp.setResult(IoTDB.schemaProcessor.isPathExistsInTemplate(req.name, path));
+          resp.setResult(IoTDB.metaManager.isPathExistsInTemplate(req.name, path));
           break;
         case SHOW_MEASUREMENTS:
           path = req.getMeasurement();
           resp.setQueryType(TemplateQueryType.SHOW_MEASUREMENTS.ordinal());
-          resp.setMeasurements(IoTDB.schemaProcessor.getMeasurementsInTemplate(req.name, path));
+          resp.setMeasurements(IoTDB.metaManager.getMeasurementsInTemplate(req.name, path));
           break;
         case SHOW_TEMPLATES:
           resp.setQueryType(TemplateQueryType.SHOW_TEMPLATES.ordinal());
-          resp.setMeasurements(new ArrayList<>(IoTDB.schemaProcessor.getAllTemplates()));
+          resp.setMeasurements(new ArrayList<>(IoTDB.metaManager.getAllTemplates()));
           break;
         case SHOW_SET_TEMPLATES:
           path = req.getName();
           resp.setQueryType(TemplateQueryType.SHOW_SET_TEMPLATES.ordinal());
-          resp.setMeasurements(new ArrayList<>(IoTDB.schemaProcessor.getPathsSetTemplate(path)));
+          resp.setMeasurements(new ArrayList<>(IoTDB.metaManager.getPathsSetTemplate(path)));
           break;
         case SHOW_USING_TEMPLATES:
           path = req.getName();
           resp.setQueryType(TemplateQueryType.SHOW_USING_TEMPLATES.ordinal());
-          resp.setMeasurements(new ArrayList<>(IoTDB.schemaProcessor.getPathsUsingTemplate(path)));
+          resp.setMeasurements(new ArrayList<>(IoTDB.metaManager.getPathsUsingTemplate(path)));
           break;
       }
       resp.setStatus(RpcUtils.getStatus(TSStatusCode.SUCCESS_STATUS, "Execute successfully"));
@@ -2041,7 +2081,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus setSchemaTemplate(TSSetSchemaTemplateReq req) throws TException {
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return getNotLoggedInStatus();
     }
 
@@ -2055,7 +2095,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
     try {
       SetTemplatePlan plan = new SetTemplatePlan(req.templateName, req.prefixPath);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
       return status != null ? status : executeNonQueryPlan(plan);
     } catch (IllegalPathException e) {
       return onIoTDBException(e, OperationType.EXECUTE_STATEMENT, e.getErrorCode());
@@ -2064,7 +2104,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus unsetSchemaTemplate(TSUnsetSchemaTemplateReq req) throws TException {
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return getNotLoggedInStatus();
     }
 
@@ -2078,7 +2118,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
     try {
       UnsetTemplatePlan plan = new UnsetTemplatePlan(req.prefixPath, req.templateName);
-      TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+      TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
       return status != null ? status : executeNonQueryPlan(plan);
     } catch (IllegalPathException e) {
       return onIoTDBException(e, OperationType.EXECUTE_STATEMENT, e.getErrorCode());
@@ -2087,7 +2127,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   @Override
   public TSStatus dropSchemaTemplate(TSDropSchemaTemplateReq req) throws TException {
-    if (!SESSION_MANAGER.checkLogin(req.getSessionId())) {
+    if (!serviceProvider.checkLogin(req.getSessionId())) {
       return getNotLoggedInStatus();
     }
 
@@ -2099,11 +2139,86 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
     }
 
     DropTemplatePlan plan = new DropTemplatePlan(req.templateName);
-    TSStatus status = SESSION_MANAGER.checkAuthority(plan, req.getSessionId());
+    TSStatus status = serviceProvider.checkAuthority(plan, req.getSessionId());
     return status != null ? status : executeNonQueryPlan(plan);
   }
 
+  @Override
+  public TSStatus executeOperationSync(TSOperationSyncWriteReq req) {
+    PhysicalPlan physicalPlan;
+    try {
+      ByteBuffer planBuffer = req.physicalPlan;
+      planBuffer.position(0);
+      physicalPlan = PhysicalPlan.Factory.create(req.physicalPlan);
+    } catch (IllegalPathException | IOException e) {
+      LOGGER.error("OperationSync deserialization failed.", e);
+      return new TSStatus(TSStatusCode.INTERNAL_SERVER_ERROR.getStatusCode())
+          .setMessage(e.getMessage());
+    }
+
+    OperationSyncPlanTypeUtils.OperationSyncPlanType planType =
+        OperationSyncPlanTypeUtils.getOperationSyncPlanType(physicalPlan);
+    if (planType == null) {
+      LOGGER.error(
+          "OperationSync receive unsupported PhysicalPlan type: {}",
+          physicalPlan.getOperatorName());
+      return RpcUtils.getStatus(TSStatusCode.EXECUTE_STATEMENT_ERROR);
+    }
+
+    try {
+      return serviceProvider.executeNonQuery(physicalPlan)
+          ? RpcUtils.getStatus(TSStatusCode.SUCCESS_STATUS, "Execute successfully")
+          : RpcUtils.getStatus(TSStatusCode.EXECUTE_STATEMENT_ERROR);
+    } catch (Exception e) {
+      return onNonQueryException(e, OperationType.EXECUTE_NON_QUERY_PLAN);
+    }
+  }
+
+  private void transmitOperationSync(PhysicalPlan physicalPlan) {
+
+    OperationSyncPlanTypeUtils.OperationSyncPlanType planType =
+        OperationSyncPlanTypeUtils.getOperationSyncPlanType(physicalPlan);
+    if (planType == null) {
+      // Don't need OperationSync
+      return;
+    }
+
+    // serialize physical plan
+    ByteBuffer buffer;
+    try {
+      int size = physicalPlan.getSerializedSize();
+      ByteArrayOutputStream operationSyncByteStream = new ByteArrayOutputStream(size);
+      DataOutputStream operationSyncSerializeStream = new DataOutputStream(operationSyncByteStream);
+      physicalPlan.serialize(operationSyncSerializeStream);
+      buffer = ByteBuffer.wrap(operationSyncByteStream.toByteArray());
+    } catch (IOException e) {
+      LOGGER.error("OperationSync can't serialize PhysicalPlan", e);
+      return;
+    }
+
+    switch (planType) {
+      case DDLPlan:
+        // Create OperationSyncWriteTask and wait
+        OperationSyncWriteTask ddlTask =
+            new OperationSyncWriteTask(
+                buffer,
+                operationSyncsessionPool,
+                operationSyncDDLProtector,
+                operationSyncDDLLogService);
+        ddlTask.run();
+        break;
+      case DMLPlan:
+        // Put into OperationSyncProducer
+        operationSyncProducer.put(new Pair<>(buffer, planType));
+    }
+  }
+
   protected TSStatus executeNonQueryPlan(PhysicalPlan plan) {
+    if (isEnableOperationSync) {
+      // OperationSync should transmit before execute
+      transmitOperationSync(plan);
+    }
+
     try {
       return serviceProvider.executeNonQuery(plan)
           ? RpcUtils.getStatus(TSStatusCode.SUCCESS_STATUS, "Execute successfully")
@@ -2121,7 +2236,7 @@ public class TSServiceImpl implements IClientRPCServiceWithHandler {
 
   /** Add stat of operation into metrics */
   private void addOperationLatency(Operation operation, long startTime) {
-    if (MetricConfigDescriptor.getInstance().getMetricConfig().getEnablePerformanceStat()) {
+    if (CONFIG.isEnablePerformanceStat()) {
       MetricsService.getInstance()
           .getMetricManager()
           .histogram(
