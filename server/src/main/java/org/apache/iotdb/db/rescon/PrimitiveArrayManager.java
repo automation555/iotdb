@@ -52,16 +52,16 @@ public class PrimitiveArrayManager {
           * CONFIG.getBufferedArraysMemoryProportion()
           / AMPLIFICATION_FACTOR;
 
-  /** TSDataType#serialize() -> ArrayDeque<Array>, VECTOR is ignored */
-  private static final ArrayDeque[] POOLED_ARRAYS = new ArrayDeque[TSDataType.values().length - 1];
+  /** TSDataType#serialize() -> ArrayDeque<Array> */
+  private static final ArrayDeque[] POOLED_ARRAYS = new ArrayDeque[TSDataType.values().length];
 
-  /** TSDataType#serialize() -> max size of ArrayDeque<Array>, VECTOR is ignored */
-  private static final int[] LIMITS = new int[TSDataType.values().length - 1];
+  /** TSDataType#serialize() -> max size of ArrayDeque<Array> */
+  private static final int[] LIMITS = new int[TSDataType.values().length];
 
   /** LIMITS should be updated if (TOTAL_ALLOCATION_REQUEST_COUNT.get() > limitUpdateThreshold) */
   private static long limitUpdateThreshold;
 
-  /** TSDataType#serialize() -> count of allocation requests, VECTOR is ignored */
+  /** TSDataType#serialize() -> count of allocation requests */
   private static final AtomicLong[] ALLOCATION_REQUEST_COUNTS =
       new AtomicLong[] {
         new AtomicLong(0),
@@ -86,10 +86,6 @@ public class PrimitiveArrayManager {
     // => LIMITS[i] = POOLED_ARRAYS_MEMORY_THRESHOLD / ARRAY_SIZE / ∑(datatype[i].getDataTypeSize())
     int totalDataTypeSize = 0;
     for (TSDataType dataType : TSDataType.values()) {
-      // VECTOR is ignored
-      if (dataType.equals(TSDataType.VECTOR)) {
-        continue;
-      }
       totalDataTypeSize += dataType.getDataTypeSize();
     }
     @SuppressWarnings("squid:S3518") // totalDataTypeSize can not be zero
@@ -97,7 +93,7 @@ public class PrimitiveArrayManager {
     Arrays.fill(LIMITS, (int) limit);
 
     // limitUpdateThreshold = ∑(LIMITS[i])
-    limitUpdateThreshold = (long) ((TSDataType.values().length - 1) * limit);
+    limitUpdateThreshold = (long) (TSDataType.values().length * limit);
 
     for (int i = 0; i < POOLED_ARRAYS.length; ++i) {
       POOLED_ARRAYS[i] = new ArrayDeque<>((int) limit);
@@ -113,15 +109,11 @@ public class PrimitiveArrayManager {
   private PrimitiveArrayManager() {}
 
   /**
-   * Get or allocate primitive data lists according to type.
+   * Get or allocate primitive data lists according to type
    *
    * @return an array
    */
   public static Object allocate(TSDataType dataType) {
-    if (dataType.equals(TSDataType.VECTOR)) {
-      throw new UnSupportedDataTypeException(TSDataType.VECTOR.name());
-    }
-
     if (TOTAL_ALLOCATION_REQUEST_COUNT.get() > limitUpdateThreshold) {
       synchronized (TOTAL_ALLOCATION_REQUEST_COUNT) {
         if (TOTAL_ALLOCATION_REQUEST_COUNT.get() > limitUpdateThreshold) {
@@ -164,10 +156,6 @@ public class PrimitiveArrayManager {
     //     / ∑(datatype[i].getDataTypeSize() * ratios[i])
     double weightedSumOfRatios = 0;
     for (TSDataType dataType : TSDataType.values()) {
-      // VECTOR is ignored
-      if (dataType.equals(TSDataType.VECTOR)) {
-        continue;
-      }
       weightedSumOfRatios += dataType.getDataTypeSize() * ratios[dataType.serialize()];
     }
     @SuppressWarnings("squid:S3518") // weightedSumOfRatios can not be zero
@@ -278,7 +266,7 @@ public class PrimitiveArrayManager {
    * @return an array of primitive data arrays
    */
   public static Object createDataListsByType(TSDataType dataType, int size) {
-    int arrayNumber = (int) Math.ceil((float) size / (float) ARRAY_SIZE);
+    int arrayNumber = size / ARRAY_SIZE + 1;
     switch (dataType) {
       case BOOLEAN:
         boolean[][] booleans = new boolean[arrayNumber][];
