@@ -19,17 +19,19 @@
 package org.apache.iotdb.tsfile.write;
 
 import org.apache.iotdb.tsfile.common.conf.TSFileDescriptor;
+import org.apache.iotdb.tsfile.constant.TestConstant;
 import org.apache.iotdb.tsfile.exception.write.WriteProcessException;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
-import org.apache.iotdb.tsfile.read.TsFileReader;
+import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
+import org.apache.iotdb.tsfile.fileSystem.fsFactory.FSFactory;
+import org.apache.iotdb.tsfile.read.ReadOnlyTsFile;
 import org.apache.iotdb.tsfile.read.TsFileSequenceReader;
 import org.apache.iotdb.tsfile.read.common.Field;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.read.common.RowRecord;
 import org.apache.iotdb.tsfile.read.expression.QueryExpression;
 import org.apache.iotdb.tsfile.read.query.dataset.QueryDataSet;
-import org.apache.iotdb.tsfile.utils.TsFileGeneratorForTest;
 import org.apache.iotdb.tsfile.write.record.TSRecord;
 import org.apache.iotdb.tsfile.write.record.datapoint.DataPoint;
 import org.apache.iotdb.tsfile.write.record.datapoint.DoubleDataPoint;
@@ -54,23 +56,21 @@ import static org.junit.Assert.assertTrue;
 public class TsFileReadWriteTest {
 
   private final double delta = 0.0000001;
-  private final String path = TsFileGeneratorForTest.getTestTsFilePath("root.sg1", 0, 0, 1);
+  private String path = TestConstant.BASE_OUTPUT_PATH.concat("read_write_rle.tsfile");
+  private static FSFactory fsFactory = FSFactoryProducer.getFSFactory(TestConstant.DEFAULT_TEST_FS);
   private File f;
 
   @Before
   public void setUp() {
-    f = new File(path);
+    f = fsFactory.getFile(path);
     if (f.exists()) {
       assertTrue(f.delete());
-    }
-    if (!f.getParentFile().exists()) {
-      assertTrue(f.getParentFile().mkdirs());
     }
   }
 
   @After
   public void tearDown() {
-    f = new File(path);
+    f = fsFactory.getFile(path);
     if (f.exists()) {
       assertTrue(f.delete());
     }
@@ -84,8 +84,7 @@ public class TsFileReadWriteTest {
             TSEncoding.RLE,
             TSEncoding.TS_2DIFF,
             TSEncoding.REGULAR,
-            TSEncoding.GORILLA,
-            TSEncoding.ZIGZAG);
+            TSEncoding.GORILLA);
     for (TSEncoding encoding : encodings) {
       intTest(encoding);
     }
@@ -163,10 +162,10 @@ public class TsFileReadWriteTest {
     try (TsFileWriter tsFileWriter = new TsFileWriter(f)) {
       // add measurements into file schema
       tsFileWriter.registerTimeseries(
-          new Path("device_1"),
+          new Path("device_1", "sensor_1"),
           new MeasurementSchema("sensor_1", TSDataType.FLOAT, TSEncoding.RLE));
       tsFileWriter.registerTimeseries(
-          new Path("device_1"),
+          new Path("device_1", "sensor_2"),
           new MeasurementSchema("sensor_2", TSDataType.INT32, TSEncoding.TS_2DIFF));
       // construct TSRecord
       TSRecord tsRecord = new TSRecord(1, "device_1");
@@ -177,8 +176,8 @@ public class TsFileReadWriteTest {
     }
 
     // read example : no filter
-    TsFileSequenceReader reader = new TsFileSequenceReader(path);
-    TsFileReader readTsFile = new TsFileReader(reader);
+    TsFileSequenceReader reader = new TsFileSequenceReader(fsFactory.getFile(path));
+    ReadOnlyTsFile readTsFile = new ReadOnlyTsFile(reader);
     ArrayList<Path> paths = new ArrayList<>();
     paths.add(new Path("device_1", "sensor_2"));
     QueryExpression queryExpression = QueryExpression.create(paths, null);
@@ -209,7 +208,8 @@ public class TsFileReadWriteTest {
     // add measurements into file schema
     try (TsFileWriter tsFileWriter = new TsFileWriter(f)) {
       tsFileWriter.registerTimeseries(
-          new Path("device_1"), new MeasurementSchema("sensor_1", dataType, encodingType));
+          new Path("device_1", "sensor_1"),
+          new MeasurementSchema("sensor_1", dataType, encodingType));
       for (long i = 1; i < floatCount; i++) {
         // construct TSRecord
         TSRecord tsRecord = new TSRecord(i, "device_1");
@@ -222,8 +222,8 @@ public class TsFileReadWriteTest {
   }
 
   private void readData(ReadDataPointProxy proxy) throws IOException {
-    TsFileSequenceReader reader = new TsFileSequenceReader(path);
-    TsFileReader readTsFile = new TsFileReader(reader);
+    TsFileSequenceReader reader = new TsFileSequenceReader(fsFactory.getFile(path));
+    ReadOnlyTsFile readTsFile = new ReadOnlyTsFile(reader);
     ArrayList<Path> paths = new ArrayList<>();
     paths.add(new Path("device_1", "sensor_1"));
     QueryExpression queryExpression = QueryExpression.create(paths, null);

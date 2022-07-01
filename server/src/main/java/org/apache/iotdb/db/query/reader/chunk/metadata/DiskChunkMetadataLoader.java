@@ -18,15 +18,14 @@
  */
 package org.apache.iotdb.db.query.reader.chunk.metadata;
 
-import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.engine.modification.Modification;
 import org.apache.iotdb.db.engine.storagegroup.TsFileResource;
+import org.apache.iotdb.db.metadata.PartialPath;
 import org.apache.iotdb.db.query.context.QueryContext;
 import org.apache.iotdb.db.query.reader.chunk.DiskChunkLoader;
 import org.apache.iotdb.db.utils.QueryUtils;
 import org.apache.iotdb.tsfile.file.metadata.IChunkMetadata;
 import org.apache.iotdb.tsfile.file.metadata.ITimeSeriesMetadata;
-import org.apache.iotdb.tsfile.file.metadata.TimeseriesMetadata;
 import org.apache.iotdb.tsfile.read.controller.IChunkMetadataLoader;
 import org.apache.iotdb.tsfile.read.filter.basic.Filter;
 
@@ -54,41 +53,10 @@ public class DiskChunkMetadataLoader implements IChunkMetadataLoader {
   }
 
   @Override
-  public List<IChunkMetadata> loadChunkMetadataList(ITimeSeriesMetadata timeSeriesMetadata) {
+  public List<IChunkMetadata> loadChunkMetadataList(ITimeSeriesMetadata timeseriesMetadata) {
+    List<IChunkMetadata> chunkMetadataList = timeseriesMetadata.getChunkMetadataList();
 
-    List<IChunkMetadata> chunkMetadataList =
-        ((TimeseriesMetadata) timeSeriesMetadata).getChunkMetadataList();
-
-    List<Modification> pathModifications =
-        context.getPathModifications(resource.getModFile(), seriesPath);
-
-    if (context.isDebug()) {
-      DEBUG_LOGGER.info(
-          "Modifications size is {} for file Path: {} ",
-          pathModifications.size(),
-          resource.getTsFilePath());
-      pathModifications.forEach(c -> DEBUG_LOGGER.info(c.toString()));
-    }
-
-    if (!pathModifications.isEmpty()) {
-      QueryUtils.modifyChunkMetaData(chunkMetadataList, pathModifications);
-    }
-
-    if (context.isDebug()) {
-      DEBUG_LOGGER.info("After modification Chunk meta data list is: ");
-      chunkMetadataList.forEach(c -> DEBUG_LOGGER.info(c.toString()));
-    }
-
-    // it is ok, even if it is not thread safe, because the cost of creating a DiskChunkLoader is
-    // very cheap.
-    chunkMetadataList.forEach(
-        chunkMetadata -> {
-          if (chunkMetadata.needSetChunkLoader()) {
-            chunkMetadata.setFilePath(resource.getTsFilePath());
-            chunkMetadata.setClosed(resource.isClosed());
-            chunkMetadata.setChunkLoader(new DiskChunkLoader(context.isDebug()));
-          }
-        });
+    setDiskChunkLoader(chunkMetadataList, resource, seriesPath, context);
 
     /*
      * remove not satisfied ChunkMetaData
@@ -113,5 +81,47 @@ public class DiskChunkMetadataLoader implements IChunkMetadataLoader {
     }
 
     return chunkMetadataList;
+  }
+
+  @Override
+  public boolean isMemChunkMetadataLoader() {
+    return false;
+  }
+
+  public static void setDiskChunkLoader(
+      List<IChunkMetadata> chunkMetadataList,
+      TsFileResource resource,
+      PartialPath seriesPath,
+      QueryContext context) {
+    List<Modification> pathModifications =
+        context.getPathModifications(resource.getModFile(), seriesPath);
+
+    if (context.isDebug()) {
+      DEBUG_LOGGER.info(
+          "Modifications size is {} for file Path: {} ",
+          pathModifications.size(),
+          resource.getTsFilePath());
+      pathModifications.forEach(c -> DEBUG_LOGGER.info(c.toString()));
+    }
+
+    if (!pathModifications.isEmpty()) {
+      QueryUtils.modifyChunkMetaData(chunkMetadataList, pathModifications);
+    }
+
+    if (context.isDebug()) {
+      DEBUG_LOGGER.info("After modification Chunk meta data list is: ");
+      chunkMetadataList.forEach(c -> DEBUG_LOGGER.info(c.toString()));
+    }
+
+    // it is ok, even if it is not thread safe, because the cost of creating a DiskChunkLoader is
+    // very cheap.
+    chunkMetadataList.forEach(
+        chunkMetadata -> {
+          if (chunkMetadata.getChunkLoader() == null) {
+            chunkMetadata.setFile(resource.getTsFile());
+            chunkMetadata.setClosed(resource.isClosed());
+            chunkMetadata.setChunkLoader(new DiskChunkLoader(context));
+          }
+        });
   }
 }

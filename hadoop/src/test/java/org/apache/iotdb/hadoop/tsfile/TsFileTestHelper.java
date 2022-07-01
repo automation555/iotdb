@@ -24,6 +24,7 @@ import org.apache.iotdb.tsfile.read.TsFileSequenceReader;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.write.TsFileWriter;
 import org.apache.iotdb.tsfile.write.record.Tablet;
+import org.apache.iotdb.tsfile.write.schema.IMeasurementSchema;
 import org.apache.iotdb.tsfile.write.schema.MeasurementSchema;
 import org.apache.iotdb.tsfile.write.schema.Schema;
 
@@ -54,7 +55,7 @@ public class TsFileTestHelper {
       }
 
       Schema schema = new Schema();
-      List<MeasurementSchema> schemaList = new ArrayList<>();
+      List<IMeasurementSchema> schemaList = new ArrayList<>();
 
       // the number of rows to include in the tablet
       int rowNum = 1000000;
@@ -65,7 +66,7 @@ public class TsFileTestHelper {
       for (int i = 0; i < sensorNum; i++) {
         MeasurementSchema measurementSchema =
             new MeasurementSchema("sensor_" + (i + 1), TSDataType.INT64, TSEncoding.TS_2DIFF);
-        schema.registerTimeseries(new Path("device_1"), measurementSchema);
+        schema.registerTimeseries(new Path("device_1", "sensor_" + (i + 1)), measurementSchema);
         schemaList.add(measurementSchema);
       }
 
@@ -115,7 +116,7 @@ public class TsFileTestHelper {
       file.delete();
     }
     writeTsFile(filePath);
-    TsFileSequenceReader reader = new TsFileSequenceReader(filePath);
+    TsFileSequenceReader reader = new TsFileSequenceReader(file);
     logger.info("Get file meta data: {}", reader.readFileMetadata());
     reader.close();
   }

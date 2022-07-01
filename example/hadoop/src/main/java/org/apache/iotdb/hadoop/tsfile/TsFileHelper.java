@@ -24,6 +24,7 @@ import org.apache.iotdb.tsfile.read.TsFileSequenceReader;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.write.TsFileWriter;
 import org.apache.iotdb.tsfile.write.record.Tablet;
+import org.apache.iotdb.tsfile.write.schema.IMeasurementSchema;
 import org.apache.iotdb.tsfile.write.schema.MeasurementSchema;
 import org.apache.iotdb.tsfile.write.schema.Schema;
 
@@ -55,7 +56,7 @@ public class TsFileHelper {
 
       Schema schema = new Schema();
 
-      List<MeasurementSchema> schemaList = new ArrayList<>();
+      List<IMeasurementSchema> schemaList = new ArrayList<>();
 
       // the number of rows to include in the tablet
       int rowNum = 1000000;
@@ -67,15 +68,17 @@ public class TsFileHelper {
         MeasurementSchema measurementSchema =
             new MeasurementSchema(
                 Constant.SENSOR_PREFIX + (i + 1), TSDataType.INT64, TSEncoding.TS_2DIFF);
-        schema.registerTimeseries(new Path(Constant.DEVICE_1), measurementSchema);
+        schema.registerTimeseries(
+            new Path(Constant.DEVICE_1, Constant.SENSOR_PREFIX + (i + 1)), measurementSchema);
         schemaList.add(measurementSchema);
       }
 
       for (int i = 2; i < sensorNum; i++) {
-        MeasurementSchema measurementSchema =
+        IMeasurementSchema measurementSchema =
             new MeasurementSchema(
                 Constant.SENSOR_PREFIX + (i + 1), TSDataType.DOUBLE, TSEncoding.TS_2DIFF);
-        schema.registerTimeseries(new Path(Constant.DEVICE_1), measurementSchema);
+        schema.registerTimeseries(
+            new Path(Constant.DEVICE_1, Constant.SENSOR_PREFIX + (i + 1)), measurementSchema);
         schemaList.add(measurementSchema);
       }
 
@@ -132,7 +135,7 @@ public class TsFileHelper {
       file.delete();
     }
     writeTsFile(filePath);
-    try (TsFileSequenceReader reader = new TsFileSequenceReader(filePath)) {
+    try (TsFileSequenceReader reader = new TsFileSequenceReader(file)) {
       logger.info("Get file meta data: {}", reader.readFileMetadata());
     }
   }

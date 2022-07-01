@@ -19,32 +19,27 @@
 
 package org.apache.iotdb.db.engine.trigger.service;
 
-import org.apache.iotdb.commons.exception.MetadataException;
-import org.apache.iotdb.commons.exception.StartupException;
-import org.apache.iotdb.commons.file.SystemFileFactory;
-import org.apache.iotdb.commons.path.PartialPath;
-import org.apache.iotdb.commons.service.IService;
-import org.apache.iotdb.commons.service.ServiceType;
-import org.apache.iotdb.commons.utils.TestOnly;
-import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.engine.fileSystem.SystemFileFactory;
 import org.apache.iotdb.db.engine.trigger.api.Trigger;
 import org.apache.iotdb.db.engine.trigger.executor.TriggerExecutor;
+import org.apache.iotdb.db.exception.StartupException;
 import org.apache.iotdb.db.exception.TriggerExecutionException;
 import org.apache.iotdb.db.exception.TriggerManagementException;
-import org.apache.iotdb.db.metadata.idtable.IDTable;
-import org.apache.iotdb.db.metadata.idtable.IDTableManager;
-import org.apache.iotdb.db.metadata.mnode.IMNode;
-import org.apache.iotdb.db.metadata.mnode.IMeasurementMNode;
+import org.apache.iotdb.db.exception.metadata.MetadataException;
+import org.apache.iotdb.db.metadata.PartialPath;
+import org.apache.iotdb.db.metadata.mnode.MeasurementMNode;
 import org.apache.iotdb.db.qp.physical.PhysicalPlan;
 import org.apache.iotdb.db.qp.physical.sys.CreateTriggerPlan;
 import org.apache.iotdb.db.qp.physical.sys.DropTriggerPlan;
 import org.apache.iotdb.db.qp.physical.sys.StartTriggerPlan;
 import org.apache.iotdb.db.qp.physical.sys.StopTriggerPlan;
 import org.apache.iotdb.db.query.dataset.ListDataSet;
+import org.apache.iotdb.db.service.IService;
 import org.apache.iotdb.db.service.IoTDB;
+import org.apache.iotdb.db.service.ServiceType;
+import org.apache.iotdb.db.utils.TestOnly;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
-import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
 import org.apache.iotdb.tsfile.read.common.RowRecord;
 import org.apache.iotdb.tsfile.read.query.dataset.QueryDataSet;
 import org.apache.iotdb.tsfile.utils.Binary;
@@ -61,20 +56,18 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
-import static org.apache.iotdb.commons.conf.IoTDBConstant.COLUMN_TRIGGER_ATTRIBUTES;
-import static org.apache.iotdb.commons.conf.IoTDBConstant.COLUMN_TRIGGER_CLASS;
-import static org.apache.iotdb.commons.conf.IoTDBConstant.COLUMN_TRIGGER_EVENT;
-import static org.apache.iotdb.commons.conf.IoTDBConstant.COLUMN_TRIGGER_NAME;
-import static org.apache.iotdb.commons.conf.IoTDBConstant.COLUMN_TRIGGER_PATH;
-import static org.apache.iotdb.commons.conf.IoTDBConstant.COLUMN_TRIGGER_STATUS;
-import static org.apache.iotdb.commons.conf.IoTDBConstant.COLUMN_TRIGGER_STATUS_STARTED;
-import static org.apache.iotdb.commons.conf.IoTDBConstant.COLUMN_TRIGGER_STATUS_STOPPED;
+import static org.apache.iotdb.db.conf.IoTDBConstant.COLUMN_TRIGGER_ATTRIBUTES;
+import static org.apache.iotdb.db.conf.IoTDBConstant.COLUMN_TRIGGER_CLASS;
+import static org.apache.iotdb.db.conf.IoTDBConstant.COLUMN_TRIGGER_EVENT;
+import static org.apache.iotdb.db.conf.IoTDBConstant.COLUMN_TRIGGER_NAME;
+import static org.apache.iotdb.db.conf.IoTDBConstant.COLUMN_TRIGGER_PATH;
+import static org.apache.iotdb.db.conf.IoTDBConstant.COLUMN_TRIGGER_STATUS;
+import static org.apache.iotdb.db.conf.IoTDBConstant.COLUMN_TRIGGER_STATUS_STARTED;
+import static org.apache.iotdb.db.conf.IoTDBConstant.COLUMN_TRIGGER_STATUS_STOPPED;
 
 public class TriggerRegistrationService implements IService {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(TriggerRegistrationService.class);
-
-  private static final IoTDBConfig CONFIG = IoTDBDescriptor.getInstance().getConfig();
 
   private static final String LOG_FILE_DIR =
       IoTDBDescriptor.getInstance().getConfig().getSystemDir()
@@ -96,54 +89,40 @@ public class TriggerRegistrationService implements IService {
 
   public synchronized void register(CreateTriggerPlan plan)
       throws TriggerManagementException, TriggerExecutionException {
-    IMNode imNode = tryGetMNode(plan);
-    checkIfRegistered(plan, imNode);
+    checkIfRegistered(plan);
+    MeasurementMNode measurementMNode = tryGetMeasurementMNode(plan);
     tryAppendRegistrationLog(plan);
-    doRegister(plan, imNode);
+    doRegister(plan, measurementMNode);
   }
 
-  private void checkIfRegistered(CreateTriggerPlan plan, IMNode imNode)
+  private void checkIfRegistered(CreateTriggerPlan plan) throws TriggerManagementException {
+    TriggerExecutor executor = executors.get(plan.getTriggerName());
+    if (executor == null) {
+      return;
+    }
+
+    TriggerRegistrationInformation information = executor.getRegistrationInformation();
+    throw new TriggerManagementException(
+        information.getClassName().equals(plan.getClassName())
+            ? String.format(
+                "Failed to register trigger %s(%s), because a trigger with the same trigger name and the class name has already been registered.",
+                plan.getTriggerName(), plan.getClassName())
+            : String.format(
+                "Failed to register trigger %s(%s), because a trigger %s(%s) with the same trigger name but a different class name has already been registered.",
+                plan.getTriggerName(),
+                plan.getClassName(),
+                information.getTriggerName(),
+                information.getClassName()));
+  }
+
+  private MeasurementMNode tryGetMeasurementMNode(CreateTriggerPlan plan)
       throws TriggerManagementException {
-    TriggerExecutor executor = imNode.getTriggerExecutor();
-    if (executor != null) {
-      TriggerRegistrationInformation information = executor.getRegistrationInformation();
-      throw new TriggerManagementException(
-          String.format(
-              "Failed to register trigger %s(%s), because a trigger %s(%s) has already been registered on the timeseries %s.",
-              plan.getTriggerName(),
-              plan.getClassName(),
-              information.getTriggerName(),
-              information.getClassName(),
-              imNode.getFullPath()));
-    }
-
-    executor = executors.get(plan.getTriggerName());
-    if (executor != null) {
-      TriggerRegistrationInformation information = executor.getRegistrationInformation();
-      throw new TriggerManagementException(
-          information.getClassName().equals(plan.getClassName())
-              ? String.format(
-                  "Failed to register trigger %s(%s), because a trigger with the same trigger name and the class name has already been registered.",
-                  plan.getTriggerName(), plan.getClassName())
-              : String.format(
-                  "Failed to register trigger %s(%s), because a trigger %s(%s) with the same trigger name but a different class name has already been registered.",
-                  plan.getTriggerName(),
-                  plan.getClassName(),
-                  information.getTriggerName(),
-                  information.getClassName()));
-    }
-  }
-
-  private IMNode tryGetMNode(CreateTriggerPlan plan) throws TriggerManagementException {
     try {
-      IMNode imNode = IoTDB.schemaProcessor.getMNodeForTrigger(plan.getFullPath());
-      if (imNode == null) {
-        throw new TriggerManagementException(
-            String.format("Path [%s] does not exist", plan.getFullPath().getFullPath()));
-      }
-      return imNode;
+      return (MeasurementMNode) IoTDB.metaManager.getNodeByPath(plan.getFullPath());
     } catch (MetadataException e) {
       throw new TriggerManagementException(e.getMessage(), e);
+    } catch (ClassCastException e) {
+      throw new TriggerManagementException("Triggers can only be registered on MeasurementMNode.");
     }
   }
 
@@ -158,7 +137,7 @@ public class TriggerRegistrationService implements IService {
     }
   }
 
-  private void doRegister(CreateTriggerPlan plan, IMNode imNode)
+  private void doRegister(CreateTriggerPlan plan, MeasurementMNode measurementMNode)
       throws TriggerManagementException, TriggerExecutionException {
     TriggerRegistrationInformation information = new TriggerRegistrationInformation(plan);
     TriggerClassLoader classLoader =
@@ -166,7 +145,7 @@ public class TriggerRegistrationService implements IService {
 
     TriggerExecutor executor;
     try {
-      executor = new TriggerExecutor(information, classLoader, imNode);
+      executor = new TriggerExecutor(information, classLoader, measurementMNode);
       executor.onCreate();
     } catch (TriggerManagementException | TriggerExecutionException e) {
       TriggerClassLoaderManager.getInstance().deregister(plan.getClassName());
@@ -174,20 +153,7 @@ public class TriggerRegistrationService implements IService {
     }
 
     executors.put(plan.getTriggerName(), executor);
-    imNode.setTriggerExecutor(executor);
-
-    // update id table
-    if (CONFIG.isEnableIDTable()) {
-      try {
-        IDTable idTable =
-            IDTableManager.getInstance().getIDTable(plan.getFullPath().getDevicePath());
-        if (executor.getIMNode().isMeasurement()) {
-          idTable.registerTrigger(plan.getFullPath(), (IMeasurementMNode) imNode);
-        }
-      } catch (MetadataException e) {
-        throw new TriggerManagementException(e.getMessage(), e);
-      }
-    }
+    measurementMNode.setTriggerExecutor(executor);
   }
 
   public synchronized void deregister(DropTriggerPlan plan) throws TriggerManagementException {
@@ -219,16 +185,9 @@ public class TriggerRegistrationService implements IService {
     }
   }
 
-  private void doDeregister(DropTriggerPlan plan) throws TriggerManagementException {
+  private void doDeregister(DropTriggerPlan plan) {
     TriggerExecutor executor = executors.remove(plan.getTriggerName());
-
-    IMNode imNode = executor.getIMNode();
-    try {
-      imNode.setTriggerExecutor(null);
-      IoTDB.schemaProcessor.releaseMNodeAfterDropTrigger(imNode);
-    } catch (MetadataException e) {
-      throw new TriggerManagementException(e.getMessage(), e);
-    }
+    executor.getMeasurementMNode().setTriggerExecutor(null);
 
     try {
       executor.onDrop();
@@ -238,19 +197,6 @@ public class TriggerRegistrationService implements IService {
 
     TriggerClassLoaderManager.getInstance()
         .deregister(executor.getRegistrationInformation().getClassName());
-
-    // update id table
-    if (CONFIG.isEnableIDTable()) {
-      try {
-        PartialPath fullPath = executor.getIMNode().getPartialPath();
-        IDTable idTable = IDTableManager.getInstance().getIDTable(fullPath.getDevicePath());
-        if (executor.getIMNode().isMeasurement()) {
-          idTable.deregisterTrigger(fullPath, (IMeasurementMNode) executor.getIMNode());
-        }
-      } catch (MetadataException e) {
-        throw new TriggerManagementException(e.getMessage(), e);
-      }
-    }
   }
 
   public void activate(StartTriggerPlan plan)
@@ -373,7 +319,7 @@ public class TriggerRegistrationService implements IService {
         FileUtils.deleteQuietly(temporaryLogFile);
       } else {
         doRecoveryFromLogFile(temporaryLogFile);
-        FSFactoryProducer.getFSFactory().moveFile(temporaryLogFile, logFile);
+        SystemFileFactory.INSTANCE.moveFile(temporaryLogFile, logFile);
       }
     } else if (logFile.exists()) {
       doRecoveryFromLogFile(logFile);
@@ -383,7 +329,7 @@ public class TriggerRegistrationService implements IService {
   private void doRecoveryFromLogFile(File logFile) throws IOException, TriggerManagementException {
     for (CreateTriggerPlan createTriggerPlan : recoverCreateTriggerPlans(logFile)) {
       try {
-        doRegister(createTriggerPlan, tryGetMNode(createTriggerPlan));
+        doRegister(createTriggerPlan, tryGetMeasurementMNode(createTriggerPlan));
         if (createTriggerPlan.isStopped()) {
           executors.get(createTriggerPlan.getTriggerName()).onStop();
         }
@@ -446,7 +392,7 @@ public class TriggerRegistrationService implements IService {
 
       File temporaryLogFile = SystemFileFactory.INSTANCE.getFile(TEMPORARY_LOG_FILE_NAME);
       File logFile = SystemFileFactory.INSTANCE.getFile(LOG_FILE_NAME);
-      FSFactoryProducer.getFSFactory().moveFile(temporaryLogFile, logFile);
+      SystemFileFactory.INSTANCE.moveFile(temporaryLogFile, logFile);
     } catch (IOException ignored) {
       // ignored
     }
@@ -485,10 +431,6 @@ public class TriggerRegistrationService implements IService {
   @Override
   public ServiceType getID() {
     return ServiceType.TRIGGER_REGISTRATION_SERVICE;
-  }
-
-  public int executorSize() {
-    return executors.size();
   }
 
   public static TriggerRegistrationService getInstance() {

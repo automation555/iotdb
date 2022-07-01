@@ -21,7 +21,6 @@ package org.apache.iotdb.spark.tool;
 import java.io.File;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
-import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.utils.Binary;
 import org.apache.iotdb.tsfile.write.TsFileWriter;
@@ -32,29 +31,31 @@ import org.apache.iotdb.tsfile.write.record.datapoint.FloatDataPoint;
 import org.apache.iotdb.tsfile.write.record.datapoint.StringDataPoint;
 import org.apache.iotdb.tsfile.write.schema.MeasurementSchema;
 
-/** Write an example TsFile as shown in README. */
+/**
+ * Write an example TsFile as shown in README.
+ */
 public class TsFileExample {
 
   public static void create(String tsfilePath) throws Exception {
-    File f = FSFactoryProducer.getFSFactory().getFile(tsfilePath);
+    File f = new File(tsfilePath);
     if (f.exists()) {
       f.delete();
     }
     TsFileWriter tsFileWriter = new TsFileWriter(f);
 
     // add measurements into file schema
-    tsFileWriter.registerTimeseries(
-        new Path("root.ln.wf01.wt01"),
-        new MeasurementSchema("status", TSDataType.BOOLEAN, TSEncoding.PLAIN));
-    tsFileWriter.registerTimeseries(
-        new Path("root.ln.wf01.wt01"),
-        new MeasurementSchema("temperature", TSDataType.FLOAT, TSEncoding.RLE));
-    tsFileWriter.registerTimeseries(
-        new Path("root.ln.wf02.wt02"),
-        new MeasurementSchema("temperature", TSDataType.FLOAT, TSEncoding.RLE));
-    tsFileWriter.registerTimeseries(
-        new Path("root.ln.wf02.wt02"),
-        new MeasurementSchema("hardware", TSDataType.TEXT, TSEncoding.PLAIN));
+    tsFileWriter
+        .registerTimeseries(new Path("root.ln.wf01.wt01", "status"),
+            new MeasurementSchema("status", TSDataType.BOOLEAN, TSEncoding.PLAIN));
+    tsFileWriter
+        .registerTimeseries(new Path("root.ln.wf01.wt01", "temperature"),
+            new MeasurementSchema("temperature", TSDataType.FLOAT, TSEncoding.RLE));
+    tsFileWriter
+        .registerTimeseries(new Path("root.ln.wf02.wt02", "temperature"),
+            new MeasurementSchema("temperature", TSDataType.FLOAT, TSEncoding.RLE));
+    tsFileWriter
+        .registerTimeseries(new Path("root.ln.wf02.wt02", "hardware"),
+            new MeasurementSchema("hardware", TSDataType.TEXT, TSEncoding.PLAIN));
 
     // construct TSRecord
     TSRecord tsRecord = new TSRecord(1, "root.ln.wf01.wt01");
@@ -108,4 +109,5 @@ public class TsFileExample {
     // close TsFile
     tsFileWriter.close();
   }
+
 }

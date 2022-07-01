@@ -18,6 +18,9 @@
  */
 package org.apache.iotdb.tsfile.read;
 
+import org.apache.iotdb.tsfile.constant.TestConstant;
+import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
+import org.apache.iotdb.tsfile.fileSystem.fsFactory.FSFactory;
 import org.apache.iotdb.tsfile.read.common.Field;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.read.common.RowRecord;
@@ -45,14 +48,16 @@ import static org.junit.Assert.assertFalse;
 
 public class ReadTest {
 
-  private static final String fileName = FileGenerator.outputDataFile;
-  private static TsFileReader roTsFile = null;
+  private static String fileName = TestConstant.BASE_OUTPUT_PATH.concat("perTestOutputData.tsfile");
+  private static final FSFactory fsFactory =
+      FSFactoryProducer.getFSFactory(TestConstant.DEFAULT_TEST_FS);
+  private static ReadOnlyTsFile roTsFile = null;
 
   @Before
   public void prepare() throws IOException {
     FileGenerator.generateFile(1000, 100);
-    TsFileSequenceReader reader = new TsFileSequenceReader(fileName);
-    roTsFile = new TsFileReader(reader);
+    TsFileSequenceReader reader = new TsFileSequenceReader(fsFactory.getFile(fileName));
+    roTsFile = new ReadOnlyTsFile(reader);
   }
 
   @After

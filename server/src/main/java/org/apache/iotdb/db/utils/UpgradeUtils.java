@@ -18,14 +18,15 @@
  */
 package org.apache.iotdb.db.utils;
 
+import org.apache.iotdb.db.engine.fileSystem.SystemFileFactory;
 import org.apache.iotdb.db.engine.modification.ModificationFile;
 import org.apache.iotdb.db.engine.storagegroup.TsFileResource;
-import org.apache.iotdb.db.engine.storagegroup.TsFileResourceStatus;
 import org.apache.iotdb.db.engine.upgrade.UpgradeCheckStatus;
 import org.apache.iotdb.db.engine.upgrade.UpgradeLog;
 import org.apache.iotdb.tsfile.common.conf.TSFileConfig;
 import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
 import org.apache.iotdb.tsfile.fileSystem.fsFactory.FSFactory;
+import org.apache.iotdb.tsfile.utils.FSUtils;
 import org.apache.iotdb.tsfile.v2.read.TsFileSequenceReaderForV2;
 
 import org.slf4j.Logger;
@@ -48,8 +49,6 @@ public class UpgradeUtils {
   private static final String COMMA_SEPERATOR = ",";
   private static final ReadWriteLock cntUpgradeFileLock = new ReentrantReadWriteLock();
   private static final ReadWriteLock upgradeLogLock = new ReentrantReadWriteLock();
-
-  private static FSFactory fsFactory = FSFactoryProducer.getFSFactory();
 
   private static Map<String, Integer> upgradeRecoverMap = new HashMap<>();
 
@@ -74,7 +73,7 @@ public class UpgradeUtils {
     }
     tsFileResource.readLock();
     try (TsFileSequenceReaderForV2 tsFileSequenceReader =
-        new TsFileSequenceReaderForV2(tsFileResource.getTsFile().getAbsolutePath())) {
+        new TsFileSequenceReaderForV2(tsFileResource.getTsFile())) {
       String versionNumber = tsFileSequenceReader.readVersionNumberV2();
       if (versionNumber.equals(TSFileConfig.VERSION_NUMBER_V2)
           || versionNumber.equals(TSFileConfig.VERSION_NUMBER_V1)) {
@@ -95,6 +94,7 @@ public class UpgradeUtils {
     List<TsFileResource> upgradedResources = resource.getUpgradedResources();
     for (TsFileResource upgradedResource : upgradedResources) {
       File upgradedFile = upgradedResource.getTsFile();
+      FSFactory fsFactory = FSFactoryProducer.getFSFactory(FSUtils.getFSType(upgradedFile));
       long partition = upgradedResource.getTimePartition();
       String virtualStorageGroupDir = upgradedFile.getParentFile().getParentFile().getParent();
       File partitionDir = fsFactory.getFile(virtualStorageGroupDir, String.valueOf(partition));
@@ -119,10 +119,20 @@ public class UpgradeUtils {
       if (fsFactory.getFile(partitionDir, newModsFile.getName()).exists()) {
         upgradedResource.getModFile();
       }
-      upgradedResource.setStatus(TsFileResourceStatus.CLOSED);
+      upgradedResource.setClosed(true);
       upgradedResource.serialize();
       // delete generated temp resource file
       Files.delete(tempResourceFile.toPath());
+      // delete tmp partition folder when it is empty
+      File tmpPartitionDir = upgradedFile.getParentFile();
+      if (tmpPartitionDir.isDirectory() && tmpPartitionDir.listFiles().length == 0) {
+        Files.delete(tmpPartitionDir.toPath());
+      }
+      // delete upgrade folder when it is empty
+      File upgradeDir = tmpPartitionDir.getParentFile();
+      if (upgradeDir.isDirectory() && upgradeDir.listFiles().length == 0) {
+        Files.delete(upgradeDir.toPath());
+      }
     }
   }
 
@@ -138,11 +148,10 @@ public class UpgradeUtils {
 
   @SuppressWarnings("squid:S3776") // Suppress high Cognitive Complexity warning
   public static void recoverUpgrade() {
-    if (FSFactoryProducer.getFSFactory().getFile(UpgradeLog.getUpgradeLogPath()).exists()) {
+    if (SystemFileFactory.INSTANCE.getFile(UpgradeLog.getUpgradeLogPath()).exists()) {
       try (BufferedReader upgradeLogReader =
           new BufferedReader(
-              new FileReader(
-                  FSFactoryProducer.getFSFactory().getFile(UpgradeLog.getUpgradeLogPath())))) {
+              new FileReader(SystemFileFactory.INSTANCE.getFile(UpgradeLog.getUpgradeLogPath())))) {
         String line = null;
         while ((line = upgradeLogReader.readLine()) != null) {
           String oldFilePath = line.split(COMMA_SEPERATOR)[0];
@@ -159,7 +168,7 @@ public class UpgradeUtils {
             UpgradeLog.getUpgradeLogPath(),
             e);
       } finally {
-        FSFactoryProducer.getFSFactory().getFile(UpgradeLog.getUpgradeLogPath()).delete();
+        SystemFileFactory.INSTANCE.getFile(UpgradeLog.getUpgradeLogPath()).delete();
       }
     }
   }

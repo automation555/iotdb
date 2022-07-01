@@ -19,13 +19,12 @@
 package org.apache.iotdb.tsfile.common.conf;
 
 import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
-import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.fileSystem.FSType;
 
 import java.io.Serializable;
 import java.nio.charset.Charset;
 
-/** TSFileConfig is a configuration class. Every variable is public and has default value. */
+/** TSFileConfig is a configure class. Every variables is public and has default value. */
 public class TSFileConfig implements Serializable {
 
   /** encoding configuration */
@@ -55,7 +54,7 @@ public class TSFileConfig implements Serializable {
 
   public static final String STRING_ENCODING = "UTF-8";
   public static final Charset STRING_CHARSET = Charset.forName(STRING_ENCODING);
-  public static final String CONFIG_FILE_NAME = "iotdb-datanode.properties";
+  public static final String CONFIG_FILE_NAME = "iotdb-engine.properties";
   public static final String MAGIC_STRING = "TsFile";
   public static final String VERSION_NUMBER_V2 = "000002";
   public static final String VERSION_NUMBER_V1 = "000001";
@@ -77,8 +76,8 @@ public class TSFileConfig implements Serializable {
   private int maxNumberOfPointsInPage = 1024 * 1024;
   /** The maximum degree of a metadataIndex node, default value is 256 */
   private int maxDegreeOfIndexNode = 256;
-  /** Data type for input timestamp, TsFile supports INT64. */
-  private TSDataType timeSeriesDataType = TSDataType.INT64;
+  /** Data type for input timestamp, TsFile supports INT32 or INT64. */
+  private String timeSeriesDataType = "INT64";
   /** Max length limitation of input string. */
   private int maxStringLength = 128;
   /** Floating-point precision. */
@@ -107,10 +106,6 @@ public class TSFileConfig implements Serializable {
   private double sdtMaxError = 100;
   /** Default DFT satisfy rate is 0.1 */
   private double dftSatisfyRate = 0.1;
-  /** Default SNR for FREQ encoding is 40dB. */
-  private double freqEncodingSNR = 40;
-  /** Default block size for FREQ encoding is 1024. */
-  private int freqEncodingBlockSize = 1024;
   /** Data compression method, TsFile supports UNCOMPRESSED, SNAPPY or LZ4. */
   private CompressionType compressor = CompressionType.SNAPPY;
   /** Line count threshold for checking page memory occupied size. */
@@ -118,7 +113,7 @@ public class TSFileConfig implements Serializable {
   /** Default endian value is BIG_ENDIAN. */
   private String endian = "BIG_ENDIAN";
   /** Default storage is in local file system */
-  private FSType TSFileStorageFs = FSType.LOCAL;
+  private FSType[] tsFileStorageFs = {FSType.LOCAL};
   /** Default core-site.xml file path is /etc/hadoop/conf/core-site.xml */
   private String coreSitePath = "/etc/hadoop/conf/core-site.xml";
   /** Default hdfs-site.xml file path is /etc/hadoop/conf/hdfs-site.xml */
@@ -152,6 +147,15 @@ public class TSFileConfig implements Serializable {
 
   public TSFileConfig() {}
 
+  public boolean isFSSupported(FSType fsType) {
+    for (FSType fs : tsFileStorageFs) {
+      if (fsType.equals(fs)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public int getGroupSizeInByte() {
     return groupSizeInByte;
   }
@@ -184,13 +188,13 @@ public class TSFileConfig implements Serializable {
     this.maxDegreeOfIndexNode = maxDegreeOfIndexNode;
   }
 
-  public TSDataType getTimeSeriesDataType() {
+  public String getTimeSeriesDataType() {
     return timeSeriesDataType;
   }
 
   // TS_2DIFF configuration
 
-  public void setTimeSeriesDataType(TSDataType timeSeriesDataType) {
+  public void setTimeSeriesDataType(String timeSeriesDataType) {
     this.timeSeriesDataType = timeSeriesDataType;
   }
 
@@ -336,12 +340,20 @@ public class TSFileConfig implements Serializable {
     this.bloomFilterErrorRate = bloomFilterErrorRate;
   }
 
-  public FSType getTSFileStorageFs() {
-    return this.TSFileStorageFs;
+  public FSType[] getTSFileStorageFs() {
+    return this.tsFileStorageFs;
   }
 
-  public void setTSFileStorageFs(FSType fileStorageFs) {
-    this.TSFileStorageFs = fileStorageFs;
+  public void setTSFileStorageFs(FSType[] fileStorageFs) {
+    this.tsFileStorageFs = fileStorageFs;
+  }
+
+  public void setTSFileStorageFs(String[] fileStorageFs) {
+    FSType[] fsTypes = new FSType[fileStorageFs.length];
+    for (int i = 0; i < fileStorageFs.length; ++i) {
+      fsTypes[i] = FSType.valueOf(fileStorageFs[i]);
+    }
+    this.setTSFileStorageFs(fsTypes);
   }
 
   public String getCoreSitePath() {
@@ -414,21 +426,5 @@ public class TSFileConfig implements Serializable {
 
   public void setBatchSize(int batchSize) {
     this.batchSize = batchSize;
-  }
-
-  public double getFreqEncodingSNR() {
-    return freqEncodingSNR;
-  }
-
-  public void setFreqEncodingSNR(double freqEncodingSNR) {
-    this.freqEncodingSNR = freqEncodingSNR;
-  }
-
-  public int getFreqEncodingBlockSize() {
-    return freqEncodingBlockSize;
-  }
-
-  public void setFreqEncodingBlockSize(int freqEncodingBlockSize) {
-    this.freqEncodingBlockSize = freqEncodingBlockSize;
   }
 }

@@ -25,6 +25,8 @@ import org.apache.iotdb.tsfile.constant.TestConstant;
 import org.apache.iotdb.tsfile.exception.write.WriteProcessException;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
+import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
+import org.apache.iotdb.tsfile.fileSystem.fsFactory.FSFactory;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.utils.RecordUtils;
 import org.apache.iotdb.tsfile.write.record.TSRecord;
@@ -61,9 +63,11 @@ public class PerfTest {
   public static String errorOutputDataFile;
   public static Schema schema;
   public static Random rm = new Random();
+  private static final FSFactory fsFactory =
+      FSFactoryProducer.getFSFactory(TestConstant.DEFAULT_TEST_FS);
 
   private static void generateSampleInputDataFile() throws IOException {
-    File file = new File(inputDataFile);
+    File file = fsFactory.getFile(inputDataFile);
     if (file.exists()) {
       file.delete();
     }
@@ -115,8 +119,8 @@ public class PerfTest {
   }
 
   private static void write() throws IOException, InterruptedException {
-    File file = new File(outputDataFile);
-    File errorFile = new File(errorOutputDataFile);
+    File file = fsFactory.getFile(outputDataFile);
+    File errorFile = fsFactory.getFile(errorOutputDataFile);
     if (file.exists()) {
       file.delete();
     }
@@ -138,7 +142,7 @@ public class PerfTest {
   }
 
   private static Scanner getDataFile(String path) {
-    File file = new File(path);
+    File file = fsFactory.getFile(path);
     try {
       Scanner in = new Scanner(file);
       return in;
@@ -164,27 +168,27 @@ public class PerfTest {
     Schema schema = new Schema();
     TSFileConfig conf = TSFileDescriptor.getInstance().getConfig();
     schema.registerTimeseries(
-        new Path("d1"),
+        new Path("d1", "s1"),
         new MeasurementSchema("s1", TSDataType.INT64, TSEncoding.valueOf(conf.getValueEncoder())));
     schema.registerTimeseries(
-        new Path("d1"),
+        new Path("d1", "s2"),
         new MeasurementSchema("s2", TSDataType.INT64, TSEncoding.valueOf(conf.getValueEncoder())));
     schema.registerTimeseries(
-        new Path("d1"),
+        new Path("d1", "s3"),
         new MeasurementSchema("s3", TSDataType.INT64, TSEncoding.valueOf(conf.getValueEncoder())));
     schema.registerTimeseries(
-        new Path("d1"), new MeasurementSchema("s4", TSDataType.TEXT, TSEncoding.PLAIN));
+        new Path("d1", "s4"), new MeasurementSchema("s4", TSDataType.TEXT, TSEncoding.PLAIN));
     schema.registerTimeseries(
-        new Path("d2"),
+        new Path("d2", "s1"),
         new MeasurementSchema("s1", TSDataType.INT64, TSEncoding.valueOf(conf.getValueEncoder())));
     schema.registerTimeseries(
-        new Path("d2"),
+        new Path("d2", "s2"),
         new MeasurementSchema("s2", TSDataType.INT64, TSEncoding.valueOf(conf.getValueEncoder())));
     schema.registerTimeseries(
-        new Path("d2"),
+        new Path("d2", "s3"),
         new MeasurementSchema("s3", TSDataType.INT64, TSEncoding.valueOf(conf.getValueEncoder())));
     schema.registerTimeseries(
-        new Path("d2"), new MeasurementSchema("s4", TSDataType.TEXT, TSEncoding.PLAIN));
+        new Path("d2", "s4"), new MeasurementSchema("s4", TSDataType.TEXT, TSEncoding.PLAIN));
 
     JsonObject s4 = new JsonObject();
     s4.addProperty(JsonFormatConstant.MEASUREMENT_UID, "s4");
@@ -209,15 +213,15 @@ public class PerfTest {
 
   @After
   public void after() {
-    File file = new File(inputDataFile);
+    File file = fsFactory.getFile(inputDataFile);
     if (file.exists()) {
       file.delete();
     }
-    file = new File(outputDataFile);
+    file = fsFactory.getFile(outputDataFile);
     if (file.exists()) {
       file.delete();
     }
-    file = new File(errorOutputDataFile);
+    file = fsFactory.getFile(errorOutputDataFile);
     if (file.exists()) {
       file.delete();
     }

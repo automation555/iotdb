@@ -19,8 +19,8 @@
 
 package org.apache.iotdb.db.engine.modification;
 
-import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.constant.TestConstant;
+import org.apache.iotdb.db.metadata.PartialPath;
 
 import org.junit.Test;
 
@@ -43,7 +43,7 @@ public class ModificationFileTest {
           new Deletion(new PartialPath(new String[] {"d1", "s3"}), 3, 3, 4),
           new Deletion(new PartialPath(new String[] {"d1", "s41"}), 4, 4, 5)
         };
-    try (ModificationFile mFile = new ModificationFile(tempFileName)) {
+    try (ModificationFile mFile = new ModificationFile(new File(tempFileName))) {
       for (int i = 0; i < 2; i++) {
         mFile.write(modifications[i]);
       }
@@ -76,7 +76,7 @@ public class ModificationFileTest {
           new Deletion(new PartialPath(new String[] {"d1", "s3"}), 3, 3, 4),
           new Deletion(new PartialPath(new String[] {"d1", "s4"}), 4, 4, 5),
         };
-    try (ModificationFile mFile = new ModificationFile(tempFileName)) {
+    try (ModificationFile mFile = new ModificationFile(new File(tempFileName))) {
       for (int i = 0; i < 2; i++) {
         mFile.write(modifications[i]);
       }

@@ -38,6 +38,7 @@ import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
 import org.apache.iotdb.tsfile.read.common.Chunk;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.utils.BytesUtils;
+import org.apache.iotdb.tsfile.utils.FSUtils;
 import org.apache.iotdb.tsfile.utils.PublicBAOS;
 import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
@@ -46,7 +47,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
-import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -58,7 +58,7 @@ import java.util.TreeMap;
 /**
  * TsFileIOWriter is used to construct metadata and write data stored in memory to output stream.
  */
-public class TsFileIOWriter implements AutoCloseable {
+public class TsFileIOWriter {
 
   protected static final byte[] MAGIC_STRING_BYTES;
   public static final byte VERSION_NUMBER_BYTE;
@@ -85,7 +85,7 @@ public class TsFileIOWriter implements AutoCloseable {
   private long markedPosition;
   private String currentChunkGroupDeviceId;
 
-  // for upgrade tool and split tool
+  // for upgrade tool
   Map<String, List<TimeseriesMetadata>> deviceTimeseriesMetadataMap;
 
   // the two longs marks the index range of operations in current MemTable
@@ -103,8 +103,10 @@ public class TsFileIOWriter implements AutoCloseable {
    * @throws IOException if I/O error occurs
    */
   public TsFileIOWriter(File file) throws IOException {
-    this.out = FSFactoryProducer.getFileOutputFactory().getTsFileOutput(file.getPath(), false);
     this.file = file;
+    this.out =
+        FSFactoryProducer.getFileOutputFactory(FSUtils.getFSType(this.file))
+            .getTsFileOutput(file.getPath(), false);
     if (resourceLogger.isDebugEnabled()) {
       resourceLogger.debug("{} writer is opened.", file.getName());
     }
@@ -142,14 +144,14 @@ public class TsFileIOWriter implements AutoCloseable {
     out.write(VERSION_NUMBER_BYTE);
   }
 
-  public int startChunkGroup(String deviceId) throws IOException {
+  public void startChunkGroup(String deviceId) throws IOException {
     this.currentChunkGroupDeviceId = deviceId;
     if (logger.isDebugEnabled()) {
       logger.debug("start chunk group:{}, file position {}", deviceId, out.getPosition());
     }
     chunkMetadataList = new ArrayList<>();
     ChunkGroupHeader chunkGroupHeader = new ChunkGroupHeader(currentChunkGroupDeviceId);
-    return chunkGroupHeader.serializeTo(out.wrapAsStream());
+    chunkGroupHeader.serializeTo(out.wrapAsStream());
   }
 
   /**
@@ -164,16 +166,6 @@ public class TsFileIOWriter implements AutoCloseable {
     currentChunkGroupDeviceId = null;
     chunkMetadataList = null;
     out.flush();
-  }
-
-  /**
-   * For TsFileReWriteTool / UpgradeTool. Use this method to determine if needs to start a
-   * ChunkGroup.
-   *
-   * @return isWritingChunkGroup
-   */
-  public boolean isWritingChunkGroup() {
-    return currentChunkGroupDeviceId != null;
   }
 
   /**
@@ -192,7 +184,7 @@ public class TsFileIOWriter implements AutoCloseable {
       CompressionType compressionCodecName,
       TSDataType tsDataType,
       TSEncoding encodingType,
-      Statistics<? extends Serializable> statistics,
+      Statistics<?> statistics,
       int dataSize,
       int numOfPages,
       int mask)
@@ -245,7 +237,6 @@ public class TsFileIOWriter implements AutoCloseable {
    *
    * @throws IOException if I/O error occurs
    */
-  @SuppressWarnings("squid:S3776") // Suppress high Cognitive Complexity warning
   public void endFile() throws IOException {
     long metaOffset = out.getPosition();
 
@@ -254,10 +245,8 @@ public class TsFileIOWriter implements AutoCloseable {
 
     // group ChunkMetadata by series
     Map<Path, List<IChunkMetadata>> chunkMetadataListMap = new TreeMap<>();
-
     for (ChunkGroupMetadata chunkGroupMetadata : chunkGroupMetadataList) {
-      List<ChunkMetadata> chunkMetadatas = chunkGroupMetadata.getChunkMetadataList();
-      for (IChunkMetadata chunkMetadata : chunkMetadatas) {
+      for (IChunkMetadata chunkMetadata : chunkGroupMetadata.getChunkMetadataList()) {
         Path series = new Path(chunkGroupMetadata.getDevice(), chunkMetadata.getMeasurementUid());
         chunkMetadataListMap.computeIfAbsent(series, k -> new ArrayList<>()).add(chunkMetadata);
       }
@@ -302,7 +291,6 @@ public class TsFileIOWriter implements AutoCloseable {
   /**
    * Flush TsFileMetadata, including ChunkMetadataList and TimeseriesMetaData
    *
-   * @param chunkMetadataListMap chunkMetadata that Path.mask == 0
    * @return MetadataIndexEntry list in TsFileMetadata
    */
   private MetadataIndexNode flushMetadataIndex(Map<Path, List<IChunkMetadata>> chunkMetadataListMap)
@@ -312,50 +300,40 @@ public class TsFileIOWriter implements AutoCloseable {
     deviceTimeseriesMetadataMap = new LinkedHashMap<>();
     // create device -> TimeseriesMetaDataList Map
     for (Map.Entry<Path, List<IChunkMetadata>> entry : chunkMetadataListMap.entrySet()) {
-      // for ordinary path
-      flushOneChunkMetadata(entry.getKey(), entry.getValue());
+      Path path = entry.getKey();
+      String device = path.getDevice();
+
+      // create TimeseriesMetaData
+      PublicBAOS publicBAOS = new PublicBAOS();
+      TSDataType dataType = entry.getValue().get(entry.getValue().size() - 1).getDataType();
+      Statistics seriesStatistics = Statistics.getStatsByType(dataType);
+
+      int chunkMetadataListLength = 0;
+      boolean serializeStatistic = (entry.getValue().size() > 1);
+      // flush chunkMetadataList one by one
+      for (IChunkMetadata chunkMetadata : entry.getValue()) {
+        if (!chunkMetadata.getDataType().equals(dataType)) {
+          continue;
+        }
+        chunkMetadataListLength += chunkMetadata.serializeTo(publicBAOS, serializeStatistic);
+        seriesStatistics.mergeStatistics(chunkMetadata.getStatistics());
+      }
+      TimeseriesMetadata timeseriesMetadata =
+          new TimeseriesMetadata(
+              (byte)
+                  ((serializeStatistic ? (byte) 1 : (byte) 0) | entry.getValue().get(0).getMask()),
+              chunkMetadataListLength,
+              path.getMeasurement(),
+              dataType,
+              seriesStatistics,
+              publicBAOS);
+      deviceTimeseriesMetadataMap
+          .computeIfAbsent(device, k -> new ArrayList<>())
+          .add(timeseriesMetadata);
     }
 
     // construct TsFileMetadata and return
     return MetadataIndexConstructor.constructMetadataIndex(deviceTimeseriesMetadataMap, out);
-  }
-
-  /**
-   * Flush one chunkMetadata
-   *
-   * @param path Path of chunk
-   * @param chunkMetadataList List of chunkMetadata about path(previous param)
-   */
-  private void flushOneChunkMetadata(Path path, List<IChunkMetadata> chunkMetadataList)
-      throws IOException {
-    // create TimeseriesMetaData
-    PublicBAOS publicBAOS = new PublicBAOS();
-    TSDataType dataType = chunkMetadataList.get(chunkMetadataList.size() - 1).getDataType();
-    Statistics seriesStatistics = Statistics.getStatsByType(dataType);
-
-    int chunkMetadataListLength = 0;
-    boolean serializeStatistic = (chunkMetadataList.size() > 1);
-    // flush chunkMetadataList one by one
-    for (IChunkMetadata chunkMetadata : chunkMetadataList) {
-      if (!chunkMetadata.getDataType().equals(dataType)) {
-        continue;
-      }
-      chunkMetadataListLength += chunkMetadata.serializeTo(publicBAOS, serializeStatistic);
-      seriesStatistics.mergeStatistics(chunkMetadata.getStatistics());
-    }
-
-    TimeseriesMetadata timeseriesMetadata =
-        new TimeseriesMetadata(
-            (byte)
-                ((serializeStatistic ? (byte) 1 : (byte) 0) | chunkMetadataList.get(0).getMask()),
-            chunkMetadataListLength,
-            path.getMeasurement(),
-            dataType,
-            seriesStatistics,
-            publicBAOS);
-    deviceTimeseriesMetadataMap
-        .computeIfAbsent(path.getDevice(), k -> new ArrayList<>())
-        .add(timeseriesMetadata);
   }
 
   /**
@@ -458,10 +436,6 @@ public class TsFileIOWriter implements AutoCloseable {
     out.flush();
   }
 
-  public void truncate(long offset) throws IOException {
-    out.truncate(offset);
-  }
-
   /**
    * this function is only for Test.
    *
@@ -472,7 +446,7 @@ public class TsFileIOWriter implements AutoCloseable {
   }
 
   /**
-   * this function is for Upgrade Tool and Split Tool.
+   * this function is only for Upgrade Tool.
    *
    * @return DeviceTimeseriesMetadataMap
    */

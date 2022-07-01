@@ -28,6 +28,7 @@ import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
 import org.apache.iotdb.tsfile.read.TsFileCheckStatus;
 import org.apache.iotdb.tsfile.read.TsFileSequenceReader;
 import org.apache.iotdb.tsfile.read.common.Path;
+import org.apache.iotdb.tsfile.utils.FSUtils;
 import org.apache.iotdb.tsfile.write.schema.IMeasurementSchema;
 
 import org.slf4j.Logger;
@@ -68,22 +69,20 @@ public class RestorableTsFileIOWriter extends TsFileIOWriter {
   private long maxPlanIndex = Long.MIN_VALUE;
 
   /** all chunk group metadata which have been serialized on disk. */
-  private final Map<String, Map<String, List<ChunkMetadata>>> metadatasForQuery = new HashMap<>();
+  private Map<String, Map<String, List<ChunkMetadata>>> metadatasForQuery = new HashMap<>();
 
   /**
    * @param file a given tsfile path you want to (continue to) write
    * @throws IOException if write failed, or the file is broken but autoRepair==false.
    */
   public RestorableTsFileIOWriter(File file) throws IOException {
-    this(file, true);
-  }
-
-  public RestorableTsFileIOWriter(File file, boolean truncate) throws IOException {
     if (logger.isDebugEnabled()) {
       logger.debug("{} is opened.", file.getName());
     }
     this.file = file;
-    this.out = FSFactoryProducer.getFileOutputFactory().getTsFileOutput(file.getPath(), true);
+    this.out =
+        FSFactoryProducer.getFileOutputFactory(FSUtils.getFSType(this.file))
+            .getTsFileOutput(file.getPath(), true);
 
     // file doesn't exist
     if (file.length() == 0) {
@@ -94,7 +93,7 @@ public class RestorableTsFileIOWriter extends TsFileIOWriter {
     }
 
     if (file.exists()) {
-      try (TsFileSequenceReader reader = new TsFileSequenceReader(file.getAbsolutePath(), false)) {
+      try (TsFileSequenceReader reader = new TsFileSequenceReader(file, false)) {
 
         truncatedSize = reader.selfCheck(knownSchemas, chunkGroupMetadataList, true);
         minPlanIndex = reader.getMinPlanIndex();
@@ -111,9 +110,7 @@ public class RestorableTsFileIOWriter extends TsFileIOWriter {
           crashed = true;
           canWrite = true;
           // remove broken data
-          if (truncate) {
-            out.truncate(truncatedSize);
-          }
+          out.truncate(truncatedSize);
         }
       }
     }
@@ -132,7 +129,7 @@ public class RestorableTsFileIOWriter extends TsFileIOWriter {
       throws IOException {
     long position = file.length();
 
-    try (TsFileSequenceReader reader = new TsFileSequenceReader(file.getAbsolutePath(), false)) {
+    try (TsFileSequenceReader reader = new TsFileSequenceReader(file, false)) {
       // this tsfile is complete
       if (reader.isComplete()) {
         reader.loadMetadataSize();
@@ -200,7 +197,7 @@ public class RestorableTsFileIOWriter extends TsFileIOWriter {
         List<ChunkMetadata> rowMetaDataList = chunkGroupMetadata.getChunkMetadataList();
 
         String device = chunkGroupMetadata.getDevice();
-        for (ChunkMetadata chunkMetaData : rowMetaDataList) {
+        for (IChunkMetadata chunkMetaData : rowMetaDataList) {
           String measurementId = chunkMetaData.getMeasurementUid();
           if (!metadatasForQuery.containsKey(device)) {
             metadatasForQuery.put(device, new HashMap<>());
@@ -208,17 +205,12 @@ public class RestorableTsFileIOWriter extends TsFileIOWriter {
           if (!metadatasForQuery.get(device).containsKey(measurementId)) {
             metadatasForQuery.get(device).put(measurementId, new ArrayList<>());
           }
-          metadatasForQuery.get(device).get(measurementId).add(chunkMetaData);
+          metadatasForQuery.get(device).get(measurementId).add((ChunkMetadata) chunkMetaData);
         }
       }
     }
   }
 
-  /**
-   * Whether this TsFile is crashed.
-   *
-   * @return false when this TsFile is complete
-   */
   public boolean hasCrashed() {
     return crashed;
   }
