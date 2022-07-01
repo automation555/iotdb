@@ -21,28 +21,44 @@ package org.apache.iotdb.db.metadata.lastCache.container;
 
 import org.apache.iotdb.tsfile.read.TimeValuePair;
 
-/** this interface declares the operations of LastCache data */
-public interface ILastCacheContainer {
+public class EmptyLastCacheContainer implements ILastCacheContainer {
 
-  // get lastCache of monad timseries
-  TimeValuePair getCachedLast();
+  private EmptyLastCacheContainer() {}
 
-  /**
-   * update last point cache
-   *
-   * @param timeValuePair last point
-   * @param highPriorityUpdate whether it's a high priority update
-   * @param latestFlushedTime latest flushed time
-   */
-  void updateCachedLast(
-      TimeValuePair timeValuePair, boolean highPriorityUpdate, Long latestFlushedTime);
+  public static EmptyLastCacheContainer getInstance() {
+    return InstanceHolder.INSTANCE;
+  }
 
-  // reset all lastCache data of one timeseries(monad or vector)
-  void resetLastCache();
+  @Override
+  public TimeValuePair getCachedLast() {
+    return null;
+  };
 
-  // whether the entry contains lastCache Value.
-  boolean isEmpty();
+  @Override
+  public void updateCachedLast(
+      TimeValuePair timeValuePair, boolean highPriorityUpdate, Long latestFlushedTime) {};
 
-  // whether the instance is empty container
-  boolean isEmptyContainer();
+  @Override
+  public synchronized void resetLastCache() {
+    return;
+  }
+
+  @Override
+  public boolean isEmpty() {
+    return true;
+  };
+
+  @Override
+  public boolean isEmptyContainer() {
+    return true;
+  }
+
+  static class InstanceHolder {
+
+    private static final EmptyLastCacheContainer INSTANCE = new EmptyLastCacheContainer();
+
+    private InstanceHolder() {
+      // forbidding instantiation
+    }
+  }
 }
