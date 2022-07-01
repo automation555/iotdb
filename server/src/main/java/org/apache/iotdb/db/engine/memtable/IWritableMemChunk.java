@@ -19,7 +19,6 @@
 package org.apache.iotdb.db.engine.memtable;
 
 import org.apache.iotdb.db.utils.datastructure.TVList;
-import org.apache.iotdb.db.wal.buffer.WALEntryValue;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.utils.Binary;
 import org.apache.iotdb.tsfile.utils.BitMap;
@@ -28,7 +27,7 @@ import org.apache.iotdb.tsfile.write.schema.IMeasurementSchema;
 
 import java.util.List;
 
-public interface IWritableMemChunk extends WALEntryValue {
+public interface IWritableMemChunk {
 
   void putLong(long t, long v);
 
@@ -62,7 +61,10 @@ public interface IWritableMemChunk extends WALEntryValue {
   void write(long insertTime, Object objectValue);
 
   void writeAlignedValue(
-      long insertTime, Object[] objectValue, List<IMeasurementSchema> schemaList);
+      long insertTime,
+      Object[] objectValue,
+      List<Integer> failedIndices,
+      List<IMeasurementSchema> schemaList);
 
   /**
    * write data in the range [start, end). Null value in the valueList will be replaced by the
@@ -75,6 +77,7 @@ public interface IWritableMemChunk extends WALEntryValue {
       long[] times,
       Object[] valueList,
       BitMap[] bitMaps,
+      List<Integer> failedIndices,
       List<IMeasurementSchema> schemaList,
       int start,
       int end);

@@ -19,15 +19,12 @@
 
 package org.apache.iotdb.db.engine.memtable;
 
-import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.metadata.path.AlignedPath;
-import org.apache.iotdb.db.wal.buffer.IWALByteBufferView;
+import org.apache.iotdb.db.metadata.path.PartialPath;
 import org.apache.iotdb.tsfile.utils.BitMap;
 import org.apache.iotdb.tsfile.utils.Pair;
 import org.apache.iotdb.tsfile.write.schema.IMeasurementSchema;
 
-import java.io.DataInputStream;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -42,17 +39,16 @@ public class AlignedWritableMemChunkGroup implements IWritableMemChunkGroup {
     memChunk = new AlignedWritableMemChunk(schemaList);
   }
 
-  private AlignedWritableMemChunkGroup() {}
-
   @Override
   public void writeValues(
       long[] times,
       Object[] columns,
       BitMap[] bitMaps,
+      List<Integer> failedIndices,
       List<IMeasurementSchema> schemaList,
       int start,
       int end) {
-    memChunk.writeAlignedValues(times, columns, bitMaps, schemaList, start, end);
+    memChunk.writeAlignedValues(times, columns, bitMaps, failedIndices, schemaList, start, end);
   }
 
   @Override
@@ -79,8 +75,12 @@ public class AlignedWritableMemChunkGroup implements IWritableMemChunkGroup {
   }
 
   @Override
-  public void write(long insertTime, Object[] objectValue, List<IMeasurementSchema> schemaList) {
-    memChunk.writeAlignedValue(insertTime, objectValue, schemaList);
+  public void write(
+      long insertTime,
+      Object[] objectValue,
+      List<Integer> failedIndices,
+      List<IMeasurementSchema> schemaList) {
+    memChunk.writeAlignedValue(insertTime, objectValue, failedIndices, schemaList);
   }
 
   @Override
@@ -121,22 +121,5 @@ public class AlignedWritableMemChunkGroup implements IWritableMemChunkGroup {
 
   public AlignedWritableMemChunk getAlignedMemChunk() {
     return memChunk;
-  }
-
-  @Override
-  public int serializedSize() {
-    return memChunk.serializedSize();
-  }
-
-  @Override
-  public void serializeToWAL(IWALByteBufferView buffer) {
-    memChunk.serializeToWAL(buffer);
-  }
-
-  public static AlignedWritableMemChunkGroup deserialize(DataInputStream stream)
-      throws IOException {
-    AlignedWritableMemChunkGroup memChunkGroup = new AlignedWritableMemChunkGroup();
-    memChunkGroup.memChunk = AlignedWritableMemChunk.deserialize(stream);
-    return memChunkGroup;
   }
 }
