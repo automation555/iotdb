@@ -20,6 +20,7 @@
 package org.apache.iotdb.db.query.executor;
 
 import org.apache.iotdb.db.exception.StorageEngineException;
+import org.apache.iotdb.db.exception.metadata.MetadataException;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
 import org.apache.iotdb.db.qp.physical.crud.AggregationPlan;
 import org.apache.iotdb.db.qp.physical.crud.FillQueryPlan;
@@ -29,11 +30,11 @@ import org.apache.iotdb.db.qp.physical.crud.LastQueryPlan;
 import org.apache.iotdb.db.qp.physical.crud.RawDataQueryPlan;
 import org.apache.iotdb.db.qp.physical.crud.UDAFPlan;
 import org.apache.iotdb.db.qp.physical.crud.UDTFPlan;
+import org.apache.iotdb.db.qp.physical.sys.ShowNowPlan;
 import org.apache.iotdb.db.query.context.QueryContext;
+import org.apache.iotdb.db.query.dataset.groupby.GroupByEngineDataSet;
 import org.apache.iotdb.db.query.dataset.groupby.GroupByFillDataSet;
 import org.apache.iotdb.db.query.dataset.groupby.GroupByLevelDataSet;
-import org.apache.iotdb.db.query.dataset.groupby.GroupByTimeDataSet;
-import org.apache.iotdb.db.query.dataset.groupby.GroupByTimeEngineDataSet;
 import org.apache.iotdb.db.query.dataset.groupby.GroupByWithValueFilterDataSet;
 import org.apache.iotdb.db.query.dataset.groupby.GroupByWithoutValueFilterDataSet;
 import org.apache.iotdb.db.utils.TimeValuePairUtils;
@@ -178,7 +179,7 @@ public class QueryRouter implements IQueryRouter {
               + Arrays.toString(groupByTimePlan.getLevels()));
     }
 
-    GroupByTimeEngineDataSet dataSet;
+    GroupByEngineDataSet dataSet;
 
     if (groupByTimePlan.getExpression().getType() == ExpressionType.GLOBAL_TIME) {
       dataSet = getGroupByWithoutValueFilterDataSet(context, groupByTimePlan);
@@ -223,11 +224,9 @@ public class QueryRouter implements IQueryRouter {
       throws StorageEngineException, QueryProcessException {
 
     GroupByFillDataSet dataSet = new GroupByFillDataSet(context, groupByFillPlan);
+    groupByFillPlan.initFillRange();
 
-    GroupByTimeDataSet engineDataSet;
-    // reset queryStartTime and queryEndTime for init GroupByEngineDataSet
-    groupByFillPlan.setQueryStartTime(groupByFillPlan.getStartTime());
-    groupByFillPlan.setQueryEndTime(groupByFillPlan.getEndTime());
+    GroupByEngineDataSet engineDataSet;
     if (groupByFillPlan.getExpression().getType() == ExpressionType.GLOBAL_TIME) {
       engineDataSet = getGroupByWithoutValueFilterDataSet(context, groupByFillPlan);
       ((GroupByWithoutValueFilterDataSet) engineDataSet).initGroupBy(context, groupByFillPlan);
@@ -270,5 +269,16 @@ public class QueryRouter implements IQueryRouter {
           ? udtfQueryExecutor.executeWithValueFilterNonAlign(context)
           : udtfQueryExecutor.executeWithoutValueFilterNonAlign(context);
     }
+  }
+
+  @Override
+  public QueryDataSet showNowQuery(ShowNowPlan showNowPlan, QueryContext context)
+      throws MetadataException {
+    ShowNowQueryExecutor showNowQueryExecutor = getShowNowQueryExecutor(showNowPlan);
+    return showNowQueryExecutor.execute(context, showNowPlan);
+  }
+
+  protected ShowNowQueryExecutor getShowNowQueryExecutor(ShowNowPlan showNowPlan) {
+    return new ShowNowQueryExecutor(showNowPlan);
   }
 }
