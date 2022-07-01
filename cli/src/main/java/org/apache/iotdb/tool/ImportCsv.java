@@ -37,6 +37,8 @@ import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVRecord;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.thrift.annotation.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -51,7 +53,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -67,14 +68,13 @@ import static org.apache.iotdb.tsfile.file.metadata.enums.TSDataType.TEXT;
 
 public class ImportCsv extends AbstractCsvTool {
 
+  private static Logger logger = LoggerFactory.getLogger(ImportCsv.class);
+
   private static final String FILE_ARGS = "f";
   private static final String FILE_NAME = "file or folder";
 
   private static final String FAILED_FILE_ARGS = "fd";
   private static final String FAILED_FILE_NAME = "failed file directory";
-
-  private static final String BATCH_POINT_SIZE_ARGS = "batch";
-  private static final String BATCH_POINT_SIZE_NAME = "batch point size";
 
   private static final String ALIGNED_ARGS = "aligned";
   private static final String ALIGNED_NAME = "use the aligned interface";
@@ -91,7 +91,7 @@ public class ImportCsv extends AbstractCsvTool {
   private static String timeColumn = "Time";
   private static String deviceColumn = "Device";
 
-  private static int batchPointSize = 100_000;
+  private static final int BATCH_SIZE = 10000;
 
   /**
    * create the commandline options.
@@ -145,14 +145,6 @@ public class ImportCsv extends AbstractCsvTool {
             .build();
     options.addOption(opTimeZone);
 
-    Option opBatchPointSize =
-        Option.builder(BATCH_POINT_SIZE_ARGS)
-            .argName(BATCH_POINT_SIZE_NAME)
-            .hasArg()
-            .desc("100000 (optional)")
-            .build();
-    options.addOption(opBatchPointSize);
-
     return options;
   }
 
@@ -164,9 +156,6 @@ public class ImportCsv extends AbstractCsvTool {
   private static void parseSpecialParams(CommandLine commandLine) {
     timeZoneID = commandLine.getOptionValue(TIME_ZONE_ARGS);
     targetPath = commandLine.getOptionValue(FILE_ARGS);
-    if (commandLine.getOptionValue(BATCH_POINT_SIZE_ARGS) != null) {
-      batchPointSize = Integer.parseInt(commandLine.getOptionValue(BATCH_POINT_SIZE_ARGS));
-    }
     if (commandLine.getOptionValue(FAILED_FILE_ARGS) != null) {
       failedFileDirectory = commandLine.getOptionValue(FAILED_FILE_ARGS);
       File file = new File(failedFileDirectory);
@@ -345,7 +334,6 @@ public class ImportCsv extends AbstractCsvTool {
 
     AtomicReference<SimpleDateFormat> timeFormatter = new AtomicReference<>(null);
     AtomicReference<Boolean> hasStarted = new AtomicReference<>(false);
-    AtomicInteger pointSize = new AtomicInteger(0);
 
     ArrayList<List<Object>> failedRecords = new ArrayList<>();
 
@@ -354,9 +342,8 @@ public class ImportCsv extends AbstractCsvTool {
           if (!hasStarted.get()) {
             hasStarted.set(true);
             timeFormatter.set(formatterInit(record.get(0)));
-          } else if (pointSize.get() >= batchPointSize) {
+          } else if ((record.getRecordNumber() - 1) % BATCH_SIZE == 0) {
             writeAndEmptyDataSet(deviceIds, times, typesList, valuesList, measurementsList, 3);
-            pointSize.set(0);
           }
 
           boolean isFail = false;
@@ -377,9 +364,11 @@ public class ImportCsv extends AbstractCsvTool {
                   if (type != null) {
                     headerTypeMap.put(header, type);
                   } else {
-                    System.out.printf(
-                        "Line '%s', column '%s': '%s' unknown type%n",
-                        record.getRecordNumber(), header, value);
+                    logger.error(
+                        "Line {}, column {}: {} unknown type",
+                        record.getRecordNumber(),
+                        header,
+                        value);
                     isFail = true;
                   }
                 }
@@ -388,14 +377,16 @@ public class ImportCsv extends AbstractCsvTool {
                   Object valueTrans = typeTrans(value, type);
                   if (valueTrans == null) {
                     isFail = true;
-                    System.out.printf(
-                        "Line '%s', column '%s': '%s' can't convert to '%s'%n",
-                        record.getRecordNumber(), header, value, type);
+                    logger.error(
+                        "Line {}, column {}: {} can't convert to {}",
+                        record.getRecordNumber(),
+                        header,
+                        value,
+                        type);
                   } else {
                     measurements.add(headerNameMap.get(header).replace(deviceId + '.', ""));
                     types.add(type);
                     values.add(valueTrans);
-                    pointSize.getAndIncrement();
                   }
                 }
               }
@@ -424,7 +415,6 @@ public class ImportCsv extends AbstractCsvTool {
         });
     if (!deviceIds.isEmpty()) {
       writeAndEmptyDataSet(deviceIds, times, typesList, valuesList, measurementsList, 3);
-      pointSize.set(0);
     }
 
     if (!failedRecords.isEmpty()) {
@@ -461,8 +451,6 @@ public class ImportCsv extends AbstractCsvTool {
     List<List<Object>> valuesList = new ArrayList<>();
     List<List<String>> measurementsList = new ArrayList<>();
 
-    AtomicInteger pointSize = new AtomicInteger(0);
-
     ArrayList<List<Object>> failedRecords = new ArrayList<>();
 
     records.forEach(
@@ -476,12 +464,10 @@ public class ImportCsv extends AbstractCsvTool {
             writeAndEmptyDataSet(
                 deviceName.get(), times, typesList, valuesList, measurementsList, 3);
             deviceName.set(record.get(1));
-            pointSize.set(0);
-          } else if (pointSize.get() >= batchPointSize) {
+          } else if (record.getRecordNumber() - 1 % BATCH_SIZE == 0 && times.size() != 0) {
             // insert a batch
             writeAndEmptyDataSet(
                 deviceName.get(), times, typesList, valuesList, measurementsList, 3);
-            pointSize.set(0);
           }
 
           // the data of the record
@@ -512,9 +498,11 @@ public class ImportCsv extends AbstractCsvTool {
                   if (type != null) {
                     headerTypeMap.put(measurement, type);
                   } else {
-                    System.out.printf(
-                        "Line '%s', column '%s': '%s' unknown type%n",
-                        record.getRecordNumber(), measurement, value);
+                    logger.error(
+                        "Line {}, column {}: {} unknown type",
+                        record.getRecordNumber(),
+                        measurement,
+                        value);
                     isFail.set(true);
                   }
                 }
@@ -524,14 +512,16 @@ public class ImportCsv extends AbstractCsvTool {
                 Object valueTrans = typeTrans(value, type);
                 if (valueTrans == null) {
                   isFail.set(true);
-                  System.out.printf(
-                      "Line '%s', column '%s': '%s' can't convert to '%s'%n",
-                      record.getRecordNumber(), headerNameMap.get(measurement), value, type);
+                  logger.error(
+                      "Line {}, column {}: {} can't convert to {}",
+                      record.getRecordNumber(),
+                      headerNameMap.get(measurement),
+                      value,
+                      type);
                 } else {
                   values.add(valueTrans);
                   measurements.add(headerNameMap.get(measurement));
                   types.add(type);
-                  pointSize.getAndIncrement();
                 }
               }
             }
@@ -558,7 +548,6 @@ public class ImportCsv extends AbstractCsvTool {
         });
     if (times.size() != 0) {
       writeAndEmptyDataSet(deviceName.get(), times, typesList, valuesList, measurementsList, 3);
-      pointSize.set(0);
     }
     if (!failedRecords.isEmpty()) {
       writeCsvFile(headerNames, failedRecords, failedFilePath);
@@ -607,11 +596,7 @@ public class ImportCsv extends AbstractCsvTool {
       List<List<String>> measurementsList,
       int retryTime) {
     try {
-      if (!aligned) {
-        session.insertRecords(deviceIds, times, measurementsList, typesList, valuesList);
-      } else {
-        session.insertAlignedRecords(deviceIds, times, measurementsList, typesList, valuesList);
-      }
+      session.insertAlignedRecords(deviceIds, times, measurementsList, typesList, valuesList);
     } catch (IoTDBConnectionException e) {
       if (retryTime > 0) {
         try {
@@ -714,7 +699,8 @@ public class ImportCsv extends AbstractCsvTool {
     try {
       sessionDataSet = session.executeQueryStatement(sql);
     } catch (StatementExecutionException e) {
-      System.out.println("Meet error when query the type of timeseries because " + e.getMessage());
+      System.out.println(
+          "Meet error when query the type of timeseries because the IoTDB v0.13 don't support that the path contains any purely digital path.");
       return false;
     }
     List<String> columnNames = sessionDataSet.getColumnNames();
