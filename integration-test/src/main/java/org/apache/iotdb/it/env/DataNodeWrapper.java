@@ -74,21 +74,21 @@ public class DataNodeWrapper extends AbstractNodeWrapper {
   }
 
   @Override
-  protected String getStartScriptPath() {
+  protected String[] getStartCmd() {
     String scriptName = "start-datanode.sh";
     if (SystemUtils.IS_OS_WINDOWS) {
       scriptName = "start-datanode.bat";
     }
-    return workDirFilePath("datanode" + File.separator + "sbin", scriptName);
+    return new String[] {workDirFilePath("datanode" + File.separator + "sbin", scriptName)};
   }
 
   @Override
-  protected String getStopScriptPath() {
+  protected String[] getStopCmd() {
     String scriptName = "stop-datanode.sh";
     if (SystemUtils.IS_OS_WINDOWS) {
       scriptName = "stop-datanode.bat";
     }
-    return workDirFilePath("datanode" + File.separator + "sbin", scriptName);
+    return new String[] {workDirFilePath("datanode" + File.separator + "sbin", scriptName)};
   }
 
   @Override

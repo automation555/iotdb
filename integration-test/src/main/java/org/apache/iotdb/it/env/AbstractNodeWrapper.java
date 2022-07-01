@@ -134,14 +134,14 @@ public abstract class AbstractNodeWrapper implements BaseNodeWrapper {
               }
             });
       }
-      String startScriptPath = getStartScriptPath();
-      String stopScriptPath = getStopScriptPath();
-      if (!new File(startScriptPath).setExecutable(true)) {
-        logger.error("Change {} to executable failed.", startScriptPath);
-      }
-      if (!new File(stopScriptPath).setExecutable(true)) {
-        logger.error("Change {} to executable failed.", stopScriptPath);
-      }
+      //      String startScriptPath = getStartCmd();
+      //      String stopScriptPath = getStopCmd();
+      //      if (!new File(startScriptPath).setExecutable(true)) {
+      //        logger.error("Change {} to executable failed.", startScriptPath);
+      //      }
+      //      if (!new File(stopScriptPath).setExecutable(true)) {
+      //        logger.error("Change {} to executable failed.", stopScriptPath);
+      //      }
       // Make sure the log dir exist, as the first file is output by starting script directly.
       FileUtils.createParentDirectories(new File(getLogPath()));
     } catch (IOException ex) {
@@ -175,9 +175,7 @@ public abstract class AbstractNodeWrapper implements BaseNodeWrapper {
     try {
       File stdoutFile = new File(getLogPath());
       ProcessBuilder processBuilder =
-          new ProcessBuilder(getStartScriptPath())
-              .redirectOutput(stdoutFile)
-              .redirectError(stdoutFile);
+          new ProcessBuilder(getStartCmd()).redirectOutput(stdoutFile).redirectError(stdoutFile);
       this.instance = processBuilder.start();
       logger.info("In test {} {} started.", getTestLogDirName(), getId());
     } catch (IOException ex) {
@@ -195,9 +193,7 @@ public abstract class AbstractNodeWrapper implements BaseNodeWrapper {
     // new pid, so we need to kill the new subprocess as well.
     if (SystemUtils.IS_OS_WINDOWS) {
       ProcessBuilder processBuilder =
-          new ProcessBuilder(getStopScriptPath())
-              .redirectOutput(NULL_FILE)
-              .redirectError(NULL_FILE);
+          new ProcessBuilder(getStopCmd()).redirectOutput(NULL_FILE).redirectError(NULL_FILE);
       processBuilder.environment().put("CONSOLE_LOG_LEVEL", "DEBUG");
       Process p = null;
       try {
@@ -274,9 +270,9 @@ public abstract class AbstractNodeWrapper implements BaseNodeWrapper {
 
   protected abstract void updateConfig(Properties properties);
 
-  protected abstract String getStartScriptPath();
+  protected abstract String[] getStartCmd();
 
-  protected abstract String getStopScriptPath();
+  protected abstract String[] getStopCmd();
 
   private String getLogPath() {
     return getLogDirPath() + File.separator + getId() + ".log";
