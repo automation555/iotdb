@@ -148,6 +148,7 @@ public class DataNodeRPCServiceImpl implements IDataNodeRPCService.Iface {
 
     PlanNode planNode = PlanNodeType.deserialize(req.planNode.body);
     boolean hasFailedMeasurement = false;
+    String partialInsertMessage = null;
     if (planNode instanceof InsertNode) {
       InsertNode insertNode = (InsertNode) planNode;
       try {
@@ -159,10 +160,11 @@ public class DataNodeRPCServiceImpl implements IDataNodeRPCService.Iface {
       }
       hasFailedMeasurement = insertNode.hasFailedMeasurements();
       if (hasFailedMeasurement) {
-        LOGGER.warn(
-            "Fail to insert measurements {} caused by {}",
-            insertNode.getFailedMeasurements(),
-            insertNode.getFailedMessages());
+        partialInsertMessage =
+            String.format(
+                "Fail to insert measurements %s caused by %s",
+                insertNode.getFailedMeasurements(), insertNode.getFailedMessages());
+        LOGGER.warn(partialInsertMessage);
       }
     }
     if (groupId instanceof DataRegionId) {
@@ -176,7 +178,16 @@ public class DataNodeRPCServiceImpl implements IDataNodeRPCService.Iface {
           !hasFailedMeasurement
               && TSStatusCode.SUCCESS_STATUS.getStatusCode()
                   == writeResponse.getStatus().getCode());
-      response.setMessage(writeResponse.getStatus().message);
+      if (TSStatusCode.SUCCESS_STATUS.getStatusCode() != writeResponse.getStatus().getCode()) {
+        response.setMessage(writeResponse.getStatus().message);
+        response.setStatus(writeResponse.getStatus());
+      } else if (hasFailedMeasurement) {
+        response.setMessage(partialInsertMessage);
+        response.setStatus(
+            RpcUtils.getStatus(TSStatusCode.METADATA_ERROR.getStatusCode(), partialInsertMessage));
+      } else {
+        response.setMessage(writeResponse.getStatus().message);
+      }
     } else {
       LOGGER.error(
           "Something wrong happened while calling consensus layer's write API.",

@@ -51,7 +51,6 @@ import org.apache.iotdb.db.mpp.plan.statement.StatementVisitor;
 import org.apache.iotdb.db.mpp.plan.statement.component.FillComponent;
 import org.apache.iotdb.db.mpp.plan.statement.component.FillPolicy;
 import org.apache.iotdb.db.mpp.plan.statement.component.GroupByTimeComponent;
-import org.apache.iotdb.db.mpp.plan.statement.component.OrderBy;
 import org.apache.iotdb.db.mpp.plan.statement.component.ResultColumn;
 import org.apache.iotdb.db.mpp.plan.statement.crud.DeleteDataStatement;
 import org.apache.iotdb.db.mpp.plan.statement.crud.InsertMultiTabletsStatement;
@@ -380,13 +379,8 @@ public class Analyzer {
         }
 
         if (queryStatement.isGroupByTime()) {
-          GroupByTimeComponent groupByTimeComponent = queryStatement.getGroupByTimeComponent();
-          if ((groupByTimeComponent.isIntervalByMonth()
-                  || groupByTimeComponent.isSlidingStepByMonth())
-              && queryStatement.getResultOrder() == OrderBy.TIMESTAMP_DESC) {
-            throw new SemanticException("Group by month doesn't support order by time desc now.");
-          }
-          analysis.setGroupByTimeParameter(new GroupByTimeParameter(groupByTimeComponent));
+          analysis.setGroupByTimeParameter(
+              new GroupByTimeParameter(queryStatement.getGroupByTimeComponent()));
         }
 
         if (queryStatement.getFilterNullComponent() != null) {
@@ -1434,6 +1428,10 @@ public class Analyzer {
 
       DataPartition dataPartition = partitionFetcher.getDataPartition(sgNameToQueryParamsMap);
       analysis.setDataPartitionInfo(dataPartition);
+
+      if (dataPartition.isEmpty()) {
+        analysis.setFinishQueryAfterAnalyze(true);
+      }
 
       return analysis;
     }

@@ -18,6 +18,7 @@
  */
 package org.apache.iotdb.confignode.service.thrift;
 
+import org.apache.iotdb.common.rpc.thrift.TConfigNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TConsensusGroupType;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeInfo;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeLocation;
@@ -160,7 +161,7 @@ public class ConfigNodeRPCServiceProcessorTest {
       TDataNodeRegisterResp resp = processor.registerDataNode(req);
 
       Assert.assertEquals(TSStatusCode.SUCCESS_STATUS.getStatusCode(), resp.getStatus().getCode());
-      Assert.assertEquals(i, resp.getDataNodeId());
+      Assert.assertEquals(i + 1, resp.getDataNodeId());
       checkGlobalConfig(resp.getGlobalConfig());
     }
   }
@@ -186,7 +187,7 @@ public class ConfigNodeRPCServiceProcessorTest {
     TDataNodeRegisterResp resp = processor.registerDataNode(req);
     Assert.assertEquals(
         TSStatusCode.DATANODE_ALREADY_REGISTERED.getStatusCode(), resp.getStatus().getCode());
-    Assert.assertEquals(1, resp.getDataNodeId());
+    Assert.assertEquals(2, resp.getDataNodeId());
     checkGlobalConfig(resp.getGlobalConfig());
 
     // test query DataNodeInfo
@@ -198,7 +199,7 @@ public class ConfigNodeRPCServiceProcessorTest {
     List<Map.Entry<Integer, TDataNodeInfo>> infoList = new ArrayList<>(infoMap.entrySet());
     infoList.sort(Comparator.comparingInt(Map.Entry::getKey));
     for (int i = 0; i < 3; i++) {
-      dataNodeLocation.setDataNodeId(i);
+      dataNodeLocation.setDataNodeId(i + 1);
       dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667 + i));
       dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9003 + i));
       dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 8777 + i));
@@ -207,19 +208,19 @@ public class ConfigNodeRPCServiceProcessorTest {
       Assert.assertEquals(dataNodeLocation, infoList.get(i).getValue().getLocation());
     }
 
-    infoResp = processor.getDataNodeInfo(0);
+    infoResp = processor.getDataNodeInfo(1);
     Assert.assertEquals(
         TSStatusCode.SUCCESS_STATUS.getStatusCode(), infoResp.getStatus().getCode());
     infoMap = infoResp.getDataNodeInfoMap();
     Assert.assertEquals(1, infoMap.size());
-    Assert.assertNotNull(infoMap.get(0));
-    dataNodeLocation.setDataNodeId(0);
+    Assert.assertNotNull(infoMap.get(1));
+    dataNodeLocation.setDataNodeId(1);
     dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667));
     dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9003));
     dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 8777));
     dataNodeLocation.setDataRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 40010));
     dataNodeLocation.setSchemaRegionConsensusEndPoint(new TEndPoint("0.0.0.0", 50010));
-    Assert.assertEquals(dataNodeLocation, infoMap.get(0).getLocation());
+    Assert.assertEquals(dataNodeLocation, infoMap.get(1).getLocation());
   }
 
   @Test
@@ -228,11 +229,18 @@ public class ConfigNodeRPCServiceProcessorTest {
 
     TClusterNodeInfos clusterNodes = processor.getAllClusterNodeInfos();
 
+    List<TConfigNodeLocation> configNodeInfos = clusterNodes.getConfigNodeList();
+    Assert.assertEquals(1, configNodeInfos.size());
+    TConfigNodeLocation configNodeLocation =
+        new TConfigNodeLocation(
+            0, new TEndPoint("0.0.0.0", 22277), new TEndPoint("0.0.0.0", 22278));
+    Assert.assertEquals(configNodeLocation, configNodeInfos.get(0));
+
     List<TDataNodeLocation> dataNodeInfos = clusterNodes.getDataNodeList();
     Assert.assertEquals(3, dataNodeInfos.size());
     TDataNodeLocation dataNodeLocation = new TDataNodeLocation();
     for (int i = 0; i < 3; i++) {
-      dataNodeLocation.setDataNodeId(i);
+      dataNodeLocation.setDataNodeId(i + 1);
       dataNodeLocation.setClientRpcEndPoint(new TEndPoint("0.0.0.0", 6667 + i));
       dataNodeLocation.setInternalEndPoint(new TEndPoint("0.0.0.0", 9003 + i));
       dataNodeLocation.setMPPDataExchangeEndPoint(new TEndPoint("0.0.0.0", 8777 + i));
@@ -275,7 +283,7 @@ public class ConfigNodeRPCServiceProcessorTest {
     Assert.assertEquals(2, countResp.getCount());
 
     // test count one StorageGroup
-    countResp = processor.countMatchedStorageGroups(Arrays.asList("root", "sg0", "**"));
+    countResp = processor.countMatchedStorageGroups(Arrays.asList("root", "sg0"));
     Assert.assertEquals(
         TSStatusCode.SUCCESS_STATUS.getStatusCode(), countResp.getStatus().getCode());
     Assert.assertEquals(1, countResp.getCount());
