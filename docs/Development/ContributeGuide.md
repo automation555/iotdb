@@ -122,6 +122,20 @@ plugin](https://github.com/diffplug/spotless/tree/main/plugin-maven) together wi
 8. Before you submit codes, you can use `mvn spotless:check` to check your codes manually,
 and use `mvn spotless:apply` to format your codes.
 
+**NOTICE (if you are using JDK16+)**: IF you are using JDK16+, you have to create a file called 
+`jvm.config`, put it under `.mvn/`, before you use `spotless:apply`. 
+The file contains the following content:
+```
+--add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED
+--add-exports jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED
+--add-exports jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED
+--add-exports jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED
+--add-exports jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED
+```
+
+This is [an issue of Spotless](https://github.com/diffplug/spotless/issues/834),
+Once the issue is fixed, we can remove this file.
+
 ## Code Sytle
 We use the [maven-checkstyle-plugin](https://checkstyle.sourceforge.io/config_filefilters.html) to make Java codes obey a consistent ruleset defined in [checkstyle.xml](https://github.com/apache/iotdb/blob/master/checkstyle.xml) under the project root.
 
@@ -138,6 +152,16 @@ In IDEA, you can follow these steps to change those inconsistent style formattin
 3. In the 'General' section, enable 'Use single class import' option.
 4. Change 'Class count to use import with '\*'' to 999 or another very large number.
 5. Change 'Names to count to use static import with '\*'' to 999 or another very large number.
+
+## Use git-hooks(Optional)
+
+Fortunately, IoTDB has pre-commit git-hooks to automatically do the code checks. 
+
+With the help of these pre-defined hooks, each time you commit your code, the code style check will be triggered. And if the code style is incorrect, the commit will be rejected locally, reducing the double check time by CI/CD.
+
+Besides, the smart selection mechanism will check only the changed modules to decrease the time of the code check.
+
+The hooks are under `tools/git-hooks`. See [Guide to to git-hooks](https://github.com/apache/iotdb/blob/master/tools/git-hooks/README.md) for more details.
 
 ## Contributing code
 
