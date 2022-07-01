@@ -40,6 +40,7 @@ import org.apache.iotdb.confignode.consensus.request.read.GetDataPartitionPlan;
 import org.apache.iotdb.confignode.consensus.request.read.GetOrCreateDataPartitionPlan;
 import org.apache.iotdb.confignode.consensus.request.read.GetRegionInfoListPlan;
 import org.apache.iotdb.confignode.consensus.request.read.GetStorageGroupPlan;
+import org.apache.iotdb.confignode.consensus.request.write.ActivateDataNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.RegisterDataNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.RemoveConfigNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.SetDataReplicationFactorPlan;
@@ -75,7 +76,6 @@ import org.apache.iotdb.confignode.rpc.thrift.TDeleteStorageGroupsReq;
 import org.apache.iotdb.confignode.rpc.thrift.TDropFunctionReq;
 import org.apache.iotdb.confignode.rpc.thrift.TLoginReq;
 import org.apache.iotdb.confignode.rpc.thrift.TPermissionInfoResp;
-import org.apache.iotdb.confignode.rpc.thrift.TRegionRouteMapResp;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaNodeManagementReq;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaNodeManagementResp;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaPartitionReq;
@@ -142,8 +142,7 @@ public class ConfigNodeRPCServiceProcessor implements IConfigNodeRPCService.Ifac
 
   @Override
   public TSStatus activeDataNode(TDataNodeActiveReq req) throws TException {
-    // TODO: implement active data node
-    return new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
+    return configManager.activateDataNode(new ActivateDataNodePlan(req.getDataNodeInfo()));
   }
 
   @Override
@@ -387,7 +386,12 @@ public class ConfigNodeRPCServiceProcessor implements IConfigNodeRPCService.Ifac
     return StatusUtils.OK;
   }
 
-  /** For leader to remove ConfigNode configuration in consensus layer */
+  /**
+   * For leader to remove ConfigNode configuration in consensus layer
+   *
+   * @param configNodeLocation
+   * @return
+   */
   @Override
   public TSStatus removeConfigNode(TConfigNodeLocation configNodeLocation) throws TException {
     RemoveConfigNodePlan removeConfigNodePlan = new RemoveConfigNodePlan(configNodeLocation);
@@ -403,10 +407,15 @@ public class ConfigNodeRPCServiceProcessor implements IConfigNodeRPCService.Ifac
     return status;
   }
 
-  /** For leader to stop ConfigNode */
+  /**
+   * For leader to stop ConfigNode
+   *
+   * @param configNodeLocation
+   * @return
+   */
   @Override
   public TSStatus stopConfigNode(TConfigNodeLocation configNodeLocation) throws TException {
-    if (!configManager.getNodeManager().getRegisteredConfigNodes().contains(configNodeLocation)) {
+    if (!configManager.getNodeManager().getOnlineConfigNodes().contains(configNodeLocation)) {
       return new TSStatus(TSStatusCode.REMOVE_CONFIGNODE_FAILED.getStatusCode())
           .setMessage("Stop ConfigNode failed because the ConfigNode not in current Cluster.");
     }
@@ -461,19 +470,13 @@ public class ConfigNodeRPCServiceProcessor implements IConfigNodeRPCService.Ifac
 
   @Override
   public TShowRegionResp showRegion(TShowRegionReq showRegionReq) throws TException {
-    GetRegionInfoListPlan getRegionInfoListPlan =
+    GetRegionInfoListPlan getRegionsinfoPlan =
         new GetRegionInfoListPlan(showRegionReq.getConsensusGroupType());
-    RegionInfoListResp dataSet =
-        (RegionInfoListResp) configManager.showRegion(getRegionInfoListPlan);
+    RegionInfoListResp dataSet = (RegionInfoListResp) configManager.showRegion(getRegionsinfoPlan);
     TShowRegionResp showRegionResp = new TShowRegionResp();
     showRegionResp.setStatus(dataSet.getStatus());
     showRegionResp.setRegionInfoList(dataSet.getRegionInfoList());
     return showRegionResp;
-  }
-
-  @Override
-  public TRegionRouteMapResp getLatestRegionRouteMap() throws TException {
-    return configManager.getLatestRegionRouteMap();
   }
 
   @Override
