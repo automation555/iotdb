@@ -18,18 +18,17 @@
  */
 package org.apache.iotdb.db.utils;
 
-import org.apache.iotdb.common.rpc.thrift.TSStatus;
-import org.apache.iotdb.commons.exception.IoTDBException;
 import org.apache.iotdb.db.conf.OperationType;
 import org.apache.iotdb.db.exception.BatchProcessException;
+import org.apache.iotdb.db.exception.IoTDBException;
 import org.apache.iotdb.db.exception.QueryInBatchStatementException;
 import org.apache.iotdb.db.exception.StorageGroupNotReadyException;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
 import org.apache.iotdb.db.exception.query.QueryTimeoutRuntimeException;
-import org.apache.iotdb.db.exception.sql.SQLParserException;
-import org.apache.iotdb.db.exception.sql.SemanticException;
+import org.apache.iotdb.db.exception.runtime.SQLParserException;
 import org.apache.iotdb.rpc.RpcUtils;
 import org.apache.iotdb.rpc.TSStatusCode;
+import org.apache.iotdb.service.rpc.thrift.TSStatus;
 import org.apache.iotdb.tsfile.exception.TsFileRuntimeException;
 
 import org.antlr.v4.runtime.misc.ParseCancellationException;
@@ -57,9 +56,9 @@ public class ErrorHandlingUtils {
       Exception e, String operation, TSStatusCode statusCode) {
     String message = String.format("[%s] Exception occurred: %s failed. ", statusCode, operation);
     if (e instanceof IOException || e instanceof NullPointerException) {
-      LOGGER.error("Status code: " + statusCode + ", operation: " + operation + " failed", e);
+      LOGGER.error("Status code: {}, operation: {} failed", statusCode, operation, e);
     } else {
-      LOGGER.warn("Status code: " + statusCode + ", operation: " + operation + " failed", e);
+      LOGGER.warn("Status code: {}, operation: {} failed", statusCode, operation, e);
     }
     return RpcUtils.getStatus(statusCode, message + e.getMessage());
   }
@@ -81,8 +80,8 @@ public class ErrorHandlingUtils {
     if (status != null) {
       // ignore logging sg not ready exception
       if (status.getCode() != TSStatusCode.STORAGE_GROUP_NOT_READY.getStatusCode()) {
-        LOGGER.error(
-            "Status code: " + status.getCode() + ", Query Statement: " + operation + " failed", e);
+        LOGGER.error("Status code: {}, Query Statement: {} failed", status.getCode(), operation);
+        LOGGER.error(e.toString());
       }
       return status;
     } else {
@@ -120,15 +119,7 @@ public class ErrorHandlingUtils {
       return RpcUtils.getStatus(((IoTDBException) t).getErrorCode(), rootCause.getMessage());
     } else if (t instanceof TsFileRuntimeException) {
       return RpcUtils.getStatus(TSStatusCode.TSFILE_PROCESSOR_ERROR, rootCause.getMessage());
-    } else if (t instanceof SemanticException) {
-      return RpcUtils.getStatus(TSStatusCode.SEMANTIC_ERROR, rootCause.getMessage());
     }
-
-    if (t instanceof RuntimeException && rootCause instanceof IoTDBException) {
-      return RpcUtils.getStatus(
-          ((IoTDBException) rootCause).getErrorCode(), rootCause.getMessage());
-    }
-
     return null;
   }
 
@@ -159,7 +150,11 @@ public class ErrorHandlingUtils {
       Throwable rootCause = getRootCause(e);
       // ignore logging sg not ready exception
       if (!(rootCause instanceof StorageGroupNotReadyException)) {
-        LOGGER.warn(message, e);
+        if (((IoTDBException) e).isUserException()) {
+          LOGGER.warn(message + e.getMessage());
+        } else {
+          LOGGER.warn(message, e);
+        }
       }
       return RpcUtils.getStatus(((IoTDBException) e).getErrorCode(), rootCause.getMessage());
     }
@@ -171,7 +166,7 @@ public class ErrorHandlingUtils {
     String message =
         String.format(
             "[%s] Exception occurred: %s failed. %s", statusCode, operation, e.getMessage());
-    LOGGER.warn("Status code: " + statusCode + ", operation: " + operation + " failed", e);
+    LOGGER.warn("Status code: {}, operation: {} failed", statusCode, operation, e);
     return RpcUtils.getStatus(errorCode, message);
   }
 
