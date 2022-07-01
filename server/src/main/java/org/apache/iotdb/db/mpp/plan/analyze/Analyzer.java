@@ -28,6 +28,9 @@ import org.apache.iotdb.commons.partition.SchemaNodeManagementPartition;
 import org.apache.iotdb.commons.partition.SchemaPartition;
 import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
+import org.apache.iotdb.db.engine.cache.BloomFilterCache;
+import org.apache.iotdb.db.engine.cache.ChunkCache;
+import org.apache.iotdb.db.engine.cache.TimeSeriesMetadataCache;
 import org.apache.iotdb.db.exception.sql.MeasurementNotExistException;
 import org.apache.iotdb.db.exception.sql.SemanticException;
 import org.apache.iotdb.db.exception.sql.StatementAnalyzeException;
@@ -51,7 +54,6 @@ import org.apache.iotdb.db.mpp.plan.statement.StatementVisitor;
 import org.apache.iotdb.db.mpp.plan.statement.component.FillComponent;
 import org.apache.iotdb.db.mpp.plan.statement.component.FillPolicy;
 import org.apache.iotdb.db.mpp.plan.statement.component.GroupByTimeComponent;
-import org.apache.iotdb.db.mpp.plan.statement.component.OrderBy;
 import org.apache.iotdb.db.mpp.plan.statement.component.ResultColumn;
 import org.apache.iotdb.db.mpp.plan.statement.crud.DeleteDataStatement;
 import org.apache.iotdb.db.mpp.plan.statement.crud.InsertMultiTabletsStatement;
@@ -80,6 +82,7 @@ import org.apache.iotdb.db.mpp.plan.statement.metadata.ShowDevicesStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.ShowStorageGroupStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.ShowTTLStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.ShowTimeSeriesStatement;
+import org.apache.iotdb.db.mpp.plan.statement.sys.ClearCacheStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.ExplainStatement;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.read.filter.GroupByFilter;
@@ -380,13 +383,8 @@ public class Analyzer {
         }
 
         if (queryStatement.isGroupByTime()) {
-          GroupByTimeComponent groupByTimeComponent = queryStatement.getGroupByTimeComponent();
-          if ((groupByTimeComponent.isIntervalByMonth()
-                  || groupByTimeComponent.isSlidingStepByMonth())
-              && queryStatement.getResultOrder() == OrderBy.TIMESTAMP_DESC) {
-            throw new SemanticException("Group by month doesn't support order by time desc now.");
-          }
-          analysis.setGroupByTimeParameter(new GroupByTimeParameter(groupByTimeComponent));
+          analysis.setGroupByTimeParameter(
+              new GroupByTimeParameter(queryStatement.getGroupByTimeComponent()));
         }
 
         if (queryStatement.getFilterNullComponent() != null) {
@@ -634,6 +632,25 @@ public class Analyzer {
         }
       }
       return new Pair<>(globalTimeFilter, hasValueFilter);
+    }
+
+    private GroupByFilter initGroupByFilter(GroupByTimeComponent groupByTimeComponent) {
+      if (groupByTimeComponent.isIntervalByMonth() || groupByTimeComponent.isSlidingStepByMonth()) {
+        return new GroupByMonthFilter(
+            groupByTimeComponent.getInterval(),
+            groupByTimeComponent.getSlidingStep(),
+            groupByTimeComponent.getStartTime(),
+            groupByTimeComponent.getEndTime(),
+            groupByTimeComponent.isSlidingStepByMonth(),
+            groupByTimeComponent.isIntervalByMonth(),
+            TimeZone.getTimeZone("+00:00"));
+      } else {
+        return new GroupByFilter(
+            groupByTimeComponent.getInterval(),
+            groupByTimeComponent.getSlidingStep(),
+            groupByTimeComponent.getStartTime(),
+            groupByTimeComponent.getEndTime());
+      }
     }
 
     private void updateSource(
@@ -1437,24 +1454,19 @@ public class Analyzer {
 
       return analysis;
     }
-  }
 
-  private GroupByFilter initGroupByFilter(GroupByTimeComponent groupByTimeComponent) {
-    if (groupByTimeComponent.isIntervalByMonth() || groupByTimeComponent.isSlidingStepByMonth()) {
-      return new GroupByMonthFilter(
-          groupByTimeComponent.getInterval(),
-          groupByTimeComponent.getSlidingStep(),
-          groupByTimeComponent.getStartTime(),
-          groupByTimeComponent.getEndTime(),
-          groupByTimeComponent.isSlidingStepByMonth(),
-          groupByTimeComponent.isIntervalByMonth(),
-          TimeZone.getTimeZone("+00:00"));
-    } else {
-      return new GroupByFilter(
-          groupByTimeComponent.getInterval(),
-          groupByTimeComponent.getSlidingStep(),
-          groupByTimeComponent.getStartTime(),
-          groupByTimeComponent.getEndTime());
+    @Override
+    public Analysis visitClearCache(
+        ClearCacheStatement clearCacheStatement, MPPQueryContext context) {
+      Analysis analysis = new Analysis();
+      analysis.setStatement(clearCacheStatement);
+      analysis.setFinishQueryAfterAnalyze(true);
+
+      ChunkCache.getInstance().clear();
+      TimeSeriesMetadataCache.getInstance().clear();
+      BloomFilterCache.getInstance().clear();
+
+      return analysis;
     }
   }
 }

@@ -51,7 +51,6 @@ import org.apache.iotdb.db.mpp.plan.expression.leaf.ConstantOperand;
 import org.apache.iotdb.db.mpp.plan.expression.leaf.TimeSeriesOperand;
 import org.apache.iotdb.db.mpp.plan.expression.leaf.TimestampOperand;
 import org.apache.iotdb.db.mpp.plan.expression.multi.FunctionExpression;
-import org.apache.iotdb.db.mpp.plan.expression.ternary.BetweenExpression;
 import org.apache.iotdb.db.mpp.plan.expression.unary.InExpression;
 import org.apache.iotdb.db.mpp.plan.expression.unary.IsNullExpression;
 import org.apache.iotdb.db.mpp.plan.expression.unary.LikeExpression;
@@ -104,6 +103,7 @@ import org.apache.iotdb.db.mpp.plan.statement.metadata.ShowTTLStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.ShowTimeSeriesStatement;
 import org.apache.iotdb.db.mpp.plan.statement.metadata.UnSetTTLStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.AuthorStatement;
+import org.apache.iotdb.db.mpp.plan.statement.sys.ClearCacheStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.ExplainStatement;
 import org.apache.iotdb.db.mpp.plan.statement.sys.FlushStatement;
 import org.apache.iotdb.db.qp.constant.SQLConstant;
@@ -1994,20 +1994,6 @@ public class ASTVisitor extends IoTDBSqlParserBaseVisitor<Statement> {
       return parseIsNullExpression(context, inWithoutNull);
     }
 
-    if (context.firstExpression != null
-        && context.secondExpression != null
-        && context.thirdExpression != null) {
-      Expression firstExpression = parseExpression(context.firstExpression, inWithoutNull);
-      Expression secondExpression = parseExpression(context.secondExpression, inWithoutNull);
-      Expression thirdExpression = parseExpression(context.thirdExpression, inWithoutNull);
-
-      if (context.OPERATOR_BETWEEN() != null) {
-        return new BetweenExpression(
-            firstExpression, secondExpression, thirdExpression, context.OPERATOR_NOT() != null);
-      }
-      throw new UnsupportedOperationException();
-    }
-
     if (context.unaryBeforeInExpression != null) {
       return parseInExpression(context, inWithoutNull);
     }
@@ -2123,6 +2109,8 @@ public class ASTVisitor extends IoTDBSqlParserBaseVisitor<Statement> {
     } else if (constantContext.dateExpression() != null) {
       return new ConstantOperand(
           TSDataType.INT64, String.valueOf(parseDateExpression(constantContext.dateExpression())));
+      /*} else if (constantContext.NULL_LITERAL() != null) {
+      return new ConstantOperand(TSDataType.TEXT, "");*/
     } else {
       throw new SQLParserException("Unsupported constant operand: " + text);
     }
@@ -2284,5 +2272,12 @@ public class ASTVisitor extends IoTDBSqlParserBaseVisitor<Statement> {
       showRegionStatement.setRegionType(null);
     }
     return showRegionStatement;
+  }
+
+  // Clear Cache
+
+  @Override
+  public Statement visitClearCache(IoTDBSqlParser.ClearCacheContext ctx) {
+    return new ClearCacheStatement();
   }
 }
