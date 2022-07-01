@@ -20,7 +20,6 @@ package org.apache.iotdb.confignode.manager;
 
 import org.apache.iotdb.common.rpc.thrift.TConsensusGroupId;
 import org.apache.iotdb.common.rpc.thrift.TConsensusGroupType;
-import org.apache.iotdb.common.rpc.thrift.TDataNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TRegionReplicaSet;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.common.rpc.thrift.TSeriesPartitionSlot;
@@ -33,15 +32,16 @@ import org.apache.iotdb.commons.partition.executor.SeriesPartitionExecutor;
 import org.apache.iotdb.confignode.client.SyncDataNodeClientPool;
 import org.apache.iotdb.confignode.conf.ConfigNodeConfig;
 import org.apache.iotdb.confignode.conf.ConfigNodeDescriptor;
-import org.apache.iotdb.confignode.consensus.request.read.GetDataPartitionPlan;
-import org.apache.iotdb.confignode.consensus.request.read.GetNodePathsPartitionPlan;
-import org.apache.iotdb.confignode.consensus.request.read.GetOrCreateDataPartitionPlan;
-import org.apache.iotdb.confignode.consensus.request.read.GetOrCreateSchemaPartitionPlan;
-import org.apache.iotdb.confignode.consensus.request.read.GetRegionInfoListPlan;
-import org.apache.iotdb.confignode.consensus.request.read.GetSchemaPartitionPlan;
-import org.apache.iotdb.confignode.consensus.request.write.CreateDataPartitionPlan;
-import org.apache.iotdb.confignode.consensus.request.write.CreateSchemaPartitionPlan;
-import org.apache.iotdb.confignode.consensus.request.write.PreDeleteStorageGroupPlan;
+import org.apache.iotdb.confignode.consensus.request.read.GetDataPartitionReq;
+import org.apache.iotdb.confignode.consensus.request.read.GetNodePathsPartitionReq;
+import org.apache.iotdb.confignode.consensus.request.read.GetOrCreateDataPartitionReq;
+import org.apache.iotdb.confignode.consensus.request.read.GetOrCreateSchemaPartitionReq;
+import org.apache.iotdb.confignode.consensus.request.read.GetRegionInfoListReq;
+import org.apache.iotdb.confignode.consensus.request.read.GetSchemaPartitionReq;
+import org.apache.iotdb.confignode.consensus.request.write.CreateDataPartitionReq;
+import org.apache.iotdb.confignode.consensus.request.write.CreateSchemaPartitionReq;
+import org.apache.iotdb.confignode.consensus.request.write.PreDeleteStorageGroupReq;
+import org.apache.iotdb.confignode.consensus.request.write.UpdateRegionLocationReq;
 import org.apache.iotdb.confignode.consensus.response.DataPartitionResp;
 import org.apache.iotdb.confignode.consensus.response.SchemaNodeManagementResp;
 import org.apache.iotdb.confignode.consensus.response.SchemaPartitionResp;
@@ -113,7 +113,7 @@ public class PartitionManager {
    * @param req SchemaPartitionPlan with partitionSlotsMap
    * @return SchemaPartitionDataSet that contains only existing SchemaPartition
    */
-  public DataSet getSchemaPartition(GetSchemaPartitionPlan req) {
+  public DataSet getSchemaPartition(GetSchemaPartitionReq req) {
     return getConsensusManager().read(req).getDataset();
   }
 
@@ -124,7 +124,7 @@ public class PartitionManager {
    *     List<TimePartitionSlot>>>
    * @return DataPartitionDataSet that contains only existing DataPartition
    */
-  public DataSet getDataPartition(GetDataPartitionPlan req) {
+  public DataSet getDataPartition(GetDataPartitionReq req) {
     return getConsensusManager().read(req).getDataset();
   }
 
@@ -137,7 +137,7 @@ public class PartitionManager {
    *     if waiting other threads to create Regions for too long. STORAGE_GROUP_NOT_EXIST if some
    *     StorageGroup doesn't exist.
    */
-  public DataSet getOrCreateSchemaPartition(GetOrCreateSchemaPartitionPlan req) {
+  public DataSet getOrCreateSchemaPartition(GetOrCreateSchemaPartitionReq req) {
     // After all the SchemaPartitions are allocated,
     // all the read requests about SchemaPartitionTable are parallel.
     SchemaPartitionResp resp = (SchemaPartitionResp) getSchemaPartition(req);
@@ -170,7 +170,7 @@ public class PartitionManager {
         Map<String, SchemaPartitionTable> assignedSchemaPartition =
             getLoadManager().allocateSchemaPartition(unassignedSchemaPartitionSlots);
         // Cache allocating result
-        CreateSchemaPartitionPlan createPlan = new CreateSchemaPartitionPlan();
+        CreateSchemaPartitionReq createPlan = new CreateSchemaPartitionReq();
         createPlan.setAssignedSchemaPartition(assignedSchemaPartition);
         getConsensusManager().write(createPlan);
       }
@@ -193,7 +193,7 @@ public class PartitionManager {
    *     if waiting other threads to create Regions for too long. STORAGE_GROUP_NOT_EXIST if some
    *     StorageGroup doesn't exist.
    */
-  public DataSet getOrCreateDataPartition(GetOrCreateDataPartitionPlan req) {
+  public DataSet getOrCreateDataPartition(GetOrCreateDataPartitionReq req) {
     // After all the SchemaPartitions are allocated,
     // all the read requests about SchemaPartitionTable are parallel.
     DataPartitionResp resp = (DataPartitionResp) getDataPartition(req);
@@ -227,7 +227,7 @@ public class PartitionManager {
         Map<String, DataPartitionTable> assignedDataPartition =
             getLoadManager().allocateDataPartition(unassignedDataPartitionSlots);
         // Cache allocating result
-        CreateDataPartitionPlan createPlan = new CreateDataPartitionPlan();
+        CreateDataPartitionReq createPlan = new CreateDataPartitionReq();
         createPlan.setAssignedDataPartition(assignedDataPartition);
         getConsensusManager().write(createPlan);
       }
@@ -426,17 +426,6 @@ public class PartitionManager {
   }
 
   /**
-   * Get the DataNodes who contain the specific StorageGroup's Schema or Data
-   *
-   * @param storageGroup The specific StorageGroup's name
-   * @param type SchemaRegion or DataRegion
-   * @return Set<TDataNodeLocation>, the related DataNodes
-   */
-  public Set<TDataNodeLocation> getStorageGroupRelatedDataNodes(
-      String storageGroup, TConsensusGroupType type) {
-    return partitionInfo.getStorageGroupRelatedDataNodes(storageGroup, type);
-  }
-  /**
    * Only leader use this interface
    *
    * @return All Regions' RegionReplicaSet
@@ -487,7 +476,7 @@ public class PartitionManager {
    * @return SchemaNodeManagementPartitionDataSet that contains only existing matched
    *     SchemaPartition and matched child paths aboveMtree
    */
-  public DataSet getNodePathsPartition(GetNodePathsPartitionPlan physicalPlan) {
+  public DataSet getNodePathsPartition(GetNodePathsPartitionReq physicalPlan) {
     SchemaNodeManagementResp schemaNodeManagementResp;
     ConsensusReadResponse consensusReadResponse = getConsensusManager().read(physicalPlan);
     schemaNodeManagementResp = (SchemaNodeManagementResp) consensusReadResponse.getDataset();
@@ -495,10 +484,10 @@ public class PartitionManager {
   }
 
   public void preDeleteStorageGroup(
-      String storageGroup, PreDeleteStorageGroupPlan.PreDeleteType preDeleteType) {
-    final PreDeleteStorageGroupPlan preDeleteStorageGroupPlan =
-        new PreDeleteStorageGroupPlan(storageGroup, preDeleteType);
-    getConsensusManager().write(preDeleteStorageGroupPlan);
+      String storageGroup, PreDeleteStorageGroupReq.PreDeleteType preDeleteType) {
+    final PreDeleteStorageGroupReq preDeleteStorageGroupReq =
+        new PreDeleteStorageGroupReq(storageGroup, preDeleteType);
+    getConsensusManager().write(preDeleteStorageGroupReq);
   }
 
   /**
@@ -533,7 +522,27 @@ public class PartitionManager {
     return executor.getSeriesPartitionSlot(devicePath);
   }
 
-  public DataSet getRegionInfoList(GetRegionInfoListPlan req) {
+  /**
+   * update region location
+   *
+   * @param req UpdateRegionLocationReq
+   * @return TSStatus
+   */
+  public TSStatus updateRegionLocation(UpdateRegionLocationReq req) {
+    return getConsensusManager().write(req).getStatus();
+  }
+
+  /**
+   * get storage group for region
+   *
+   * @param regionId regionId
+   * @return storage group name
+   */
+  public String getRegionStorageGroup(TConsensusGroupId regionId) {
+    return partitionInfo.getRegionStorageGroup(regionId);
+  }
+
+  public DataSet getRegionInfoList(GetRegionInfoListReq req) {
     return getConsensusManager().read(req).getDataset();
   }
 

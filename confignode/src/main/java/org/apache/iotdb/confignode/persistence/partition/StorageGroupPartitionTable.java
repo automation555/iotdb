@@ -28,7 +28,7 @@ import org.apache.iotdb.common.rpc.thrift.TTimePartitionSlot;
 import org.apache.iotdb.commons.cluster.RegionStatus;
 import org.apache.iotdb.commons.partition.DataPartitionTable;
 import org.apache.iotdb.commons.partition.SchemaPartitionTable;
-import org.apache.iotdb.confignode.consensus.request.read.GetRegionInfoListPlan;
+import org.apache.iotdb.confignode.consensus.request.read.GetRegionInfoListReq;
 import org.apache.iotdb.db.service.metrics.MetricsService;
 import org.apache.iotdb.db.service.metrics.enums.Metric;
 import org.apache.iotdb.db.service.metrics.enums.Tag;
@@ -39,6 +39,8 @@ import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TProtocol;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -56,7 +58,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class StorageGroupPartitionTable {
-
+  private static final Logger LOGGER = LoggerFactory.getLogger(StorageGroupPartitionTable.class);
   private volatile boolean isPredeleted = false;
   // The name of storage group
   private String storageGroupName;
@@ -70,7 +72,7 @@ public class StorageGroupPartitionTable {
   private final AtomicBoolean dataRegionParticle;
 
   // Region
-  private final Map<TConsensusGroupId, RegionGroup> regionGroupMap;
+  private final Map<TConsensusGroupId, RegionGroup> regionInfoMap;
   // SchemaPartition
   private final SchemaPartitionTable schemaPartitionTable;
   // DataPartition
@@ -82,7 +84,7 @@ public class StorageGroupPartitionTable {
 
     this.schemaRegionParticle = new AtomicBoolean(true);
     this.dataRegionParticle = new AtomicBoolean(true);
-    this.regionGroupMap = new ConcurrentHashMap<>();
+    this.regionInfoMap = new ConcurrentHashMap<>();
 
     this.schemaPartitionTable = new SchemaPartitionTable();
     this.dataPartitionTable = new DataPartitionTable();
@@ -98,7 +100,7 @@ public class StorageGroupPartitionTable {
               Metric.REGION.toString(),
               MetricLevel.NORMAL,
               this,
-              o -> o.getRegionGroupCount(TConsensusGroupType.SchemaRegion),
+              o -> o.getRegionCount(TConsensusGroupType.SchemaRegion),
               Tag.NAME.toString(),
               storageGroupName,
               Tag.TYPE.toString(),
@@ -109,7 +111,7 @@ public class StorageGroupPartitionTable {
               Metric.REGION.toString(),
               MetricLevel.NORMAL,
               this,
-              o -> o.getRegionGroupCount(TConsensusGroupType.DataRegion),
+              o -> o.getRegionCount(TConsensusGroupType.DataRegion),
               Tag.NAME.toString(),
               storageGroupName,
               Tag.TYPE.toString(),
@@ -155,14 +157,14 @@ public class StorageGroupPartitionTable {
    */
   public void createRegionGroups(List<TRegionReplicaSet> replicaSets) {
     replicaSets.forEach(
-        replicaSet -> regionGroupMap.put(replicaSet.getRegionId(), new RegionGroup(replicaSet)));
+        replicaSet -> regionInfoMap.put(replicaSet.getRegionId(), new RegionGroup(replicaSet)));
   }
 
   /** @return All Regions' RegionReplicaSet within one StorageGroup */
   public List<TRegionReplicaSet> getAllReplicaSets() {
     List<TRegionReplicaSet> result = new ArrayList<>();
 
-    for (RegionGroup regionGroup : regionGroupMap.values()) {
+    for (RegionGroup regionGroup : regionInfoMap.values()) {
       result.add(regionGroup.getReplicaSet());
     }
 
@@ -170,14 +172,14 @@ public class StorageGroupPartitionTable {
   }
 
   /**
-   * Get all RegionGroups currently owned by this StorageGroup
+   * Get regions currently owned by this StorageGroup
    *
    * @param type SchemaRegion or DataRegion
    * @return The regions currently owned by this StorageGroup
    */
-  public Set<RegionGroup> getRegionGroups(TConsensusGroupType type) {
+  public Set<RegionGroup> getRegion(TConsensusGroupType type) {
     Set<RegionGroup> regionGroups = new HashSet<>();
-    regionGroupMap
+    regionInfoMap
         .values()
         .forEach(
             regionGroup -> {
@@ -188,14 +190,14 @@ public class StorageGroupPartitionTable {
     return regionGroups;
   }
   /**
-   * Get the number of RegionGroups currently owned by this StorageGroup
+   * Get the number of Regions currently owned by this StorageGroup
    *
    * @param type SchemaRegion or DataRegion
    * @return The number of Regions currently owned by this StorageGroup
    */
-  public int getRegionGroupCount(TConsensusGroupType type) {
+  public int getRegionCount(TConsensusGroupType type) {
     AtomicInteger result = new AtomicInteger(0);
-    regionGroupMap
+    regionInfoMap
         .values()
         .forEach(
             regionGroup -> {
@@ -297,7 +299,7 @@ public class StorageGroupPartitionTable {
     deltaMap.forEach(
         ((consensusGroupId, delta) -> {
           total.getAndAdd(delta.get());
-          regionGroupMap.get(consensusGroupId).addCounter(delta.get());
+          regionInfoMap.get(consensusGroupId).addCounter(delta.get());
         }));
     seriesPartitionSlotsCount.getAndAdd(total.get());
   }
@@ -317,7 +319,7 @@ public class StorageGroupPartitionTable {
     deltaMap.forEach(
         ((consensusGroupId, delta) -> {
           total.getAndAdd(delta.get());
-          regionGroupMap.get(consensusGroupId).addCounter(delta.get());
+          regionInfoMap.get(consensusGroupId).addCounter(delta.get());
         }));
   }
 
@@ -331,23 +333,6 @@ public class StorageGroupPartitionTable {
   public List<TSeriesPartitionSlot> filterUnassignedSchemaPartitionSlots(
       List<TSeriesPartitionSlot> partitionSlots) {
     return schemaPartitionTable.filterUnassignedSchemaPartitionSlots(partitionSlots);
-  }
-
-  /**
-   * Get the DataNodes who contain the specific StorageGroup's Schema or Data
-   *
-   * @param type SchemaRegion or DataRegion
-   * @return Set<TDataNodeLocation>, the related DataNodes
-   */
-  public Set<TDataNodeLocation> getStorageGroupRelatedDataNodes(TConsensusGroupType type) {
-    HashSet<TDataNodeLocation> result = new HashSet<>();
-    regionGroupMap.forEach(
-        (consensusGroupId, regionGroup) -> {
-          if (consensusGroupId.getType().equals(type)) {
-            result.addAll(regionGroup.getReplicaSet().getDataNodeLocations());
-          }
-        });
-    return result;
   }
 
   /**
@@ -366,13 +351,12 @@ public class StorageGroupPartitionTable {
    * Only leader use this interface.
    *
    * @param type SchemaRegion or DataRegion
-   * @return RegionGroups' indexes that sorted by the number of allocated slots
+   * @return Regions that sorted by the number of allocated slots
    */
-  public List<Pair<Long, TConsensusGroupId>> getSortedRegionGroupSlotsCounter(
-      TConsensusGroupType type) {
+  public List<Pair<Long, TConsensusGroupId>> getSortedRegionSlotsCounter(TConsensusGroupType type) {
     List<Pair<Long, TConsensusGroupId>> result = new Vector<>();
 
-    regionGroupMap.forEach(
+    regionInfoMap.forEach(
         (consensusGroupId, regionGroup) -> {
           if (consensusGroupId.getType().equals(type)) {
             result.add(new Pair<>(regionGroup.getCounter(), consensusGroupId));
@@ -384,13 +368,13 @@ public class StorageGroupPartitionTable {
   }
 
   public void getRegionInfoList(
-      GetRegionInfoListPlan regionsInfoPlan, List<TRegionInfo> regionInfoList) {
-    regionGroupMap.forEach(
+      GetRegionInfoListReq regionsInfoReq, List<TRegionInfo> regionInfoList) {
+    regionInfoMap.forEach(
         (consensusGroupId, regionGroup) -> {
           TRegionReplicaSet replicaSet = regionGroup.getReplicaSet();
-          if (regionsInfoPlan.getRegionType() == null) {
+          if (regionsInfoReq.getRegionType() == null) {
             buildTRegionsInfo(regionInfoList, replicaSet, regionGroup);
-          } else if (regionsInfoPlan.getRegionType().ordinal()
+          } else if (regionsInfoReq.getRegionType().ordinal()
               == replicaSet.getRegionId().getType().ordinal()) {
             buildTRegionsInfo(regionInfoList, replicaSet, regionGroup);
           }
@@ -406,13 +390,8 @@ public class StorageGroupPartitionTable {
               TRegionInfo tRegionInfoList = new TRegionInfo();
               tRegionInfoList.setConsensusGroupId(replicaSet.getRegionId());
               tRegionInfoList.setStorageGroup(storageGroupName);
-              if (replicaSet.getRegionId().getType() == TConsensusGroupType.DataRegion) {
-                tRegionInfoList.setSeriesSlots(dataPartitionTable.getDataPartitionMap().size());
-                tRegionInfoList.setTimeSlots(regionGroup.getCounter());
-              } else if (replicaSet.getRegionId().getType() == TConsensusGroupType.SchemaRegion) {
-                tRegionInfoList.setSeriesSlots(regionGroup.getCounter());
-                tRegionInfoList.setTimeSlots(0);
-              }
+              long slots = regionGroup.getCounter();
+              tRegionInfoList.setSlots((int) slots);
               tRegionInfoList.setDataNodeId(dataNodeLocation.getDataNodeId());
               tRegionInfoList.setClientRpcIp(dataNodeLocation.getClientRpcEndPoint().getIp());
               tRegionInfoList.setClientRpcPort(dataNodeLocation.getClientRpcEndPoint().getPort());
@@ -428,8 +407,8 @@ public class StorageGroupPartitionTable {
     ReadWriteIOUtils.write(storageGroupName, outputStream);
     ReadWriteIOUtils.write(seriesPartitionSlotsCount.get(), outputStream);
 
-    ReadWriteIOUtils.write(regionGroupMap.size(), outputStream);
-    for (Map.Entry<TConsensusGroupId, RegionGroup> regionInfoEntry : regionGroupMap.entrySet()) {
+    ReadWriteIOUtils.write(regionInfoMap.size(), outputStream);
+    for (Map.Entry<TConsensusGroupId, RegionGroup> regionInfoEntry : regionInfoMap.entrySet()) {
       regionInfoEntry.getKey().write(protocol);
       regionInfoEntry.getValue().serialize(outputStream, protocol);
     }
@@ -450,11 +429,67 @@ public class StorageGroupPartitionTable {
       consensusGroupId.read(protocol);
       RegionGroup regionGroup = new RegionGroup();
       regionGroup.deserialize(inputStream, protocol);
-      regionGroupMap.put(consensusGroupId, regionGroup);
+      regionInfoMap.put(consensusGroupId, regionGroup);
     }
 
     schemaPartitionTable.deserialize(inputStream, protocol);
     dataPartitionTable.deserialize(inputStream, protocol);
+  }
+
+  /**
+   * update region location
+   *
+   * @param regionId regionId
+   * @param oldNode old location, will remove it
+   * @param newNode new location, will add it
+   */
+  public void updateRegionLocation(
+      TConsensusGroupId regionId, TDataNodeLocation oldNode, TDataNodeLocation newNode) {
+    addRegionNewLocation(regionId, newNode);
+    removeRegionOldLocation(regionId, oldNode);
+  }
+
+  private boolean addRegionNewLocation(TConsensusGroupId regionId, TDataNodeLocation node) {
+    RegionGroup regionGroup = regionInfoMap.get(regionId);
+    if (regionGroup == null) {
+      LOGGER.warn("not find Region Group for region {}", regionId);
+      return false;
+    }
+    if (regionGroup.getReplicaSet().getDataNodeLocations().contains(node)) {
+      LOGGER.info("Node is already in region locations, node: {}, region: {}", node, regionId);
+      return true;
+    }
+    return regionGroup.getReplicaSet().getDataNodeLocations().add(node);
+  }
+
+  private boolean removeRegionOldLocation(TConsensusGroupId regionId, TDataNodeLocation node) {
+    RegionGroup regionGroup = regionInfoMap.get(regionId);
+    if (regionGroup == null) {
+      LOGGER.warn("not find Region Group for region {}", regionId);
+      return false;
+    }
+    if (!regionGroup.getReplicaSet().getDataNodeLocations().contains(node)) {
+      LOGGER.info(
+          "Node is Not in region locations, no need to remove it, node: {}, region: {}",
+          node,
+          regionId);
+      return true;
+    }
+    return regionGroup.getReplicaSet().getDataNodeLocations().remove(node);
+  }
+
+  /**
+   * if the region contained?
+   *
+   * @param regionId TConsensusGroupId
+   * @return true if contain
+   */
+  public boolean containRegion(TConsensusGroupId regionId) {
+    return regionInfoMap.containsKey(regionId);
+  }
+
+  public String getStorageGroupName() {
+    return storageGroupName;
   }
 
   @Override
@@ -463,13 +498,13 @@ public class StorageGroupPartitionTable {
     if (o == null || getClass() != o.getClass()) return false;
     StorageGroupPartitionTable that = (StorageGroupPartitionTable) o;
     return isPredeleted == that.isPredeleted
-        && regionGroupMap.equals(that.regionGroupMap)
+        && regionInfoMap.equals(that.regionInfoMap)
         && schemaPartitionTable.equals(that.schemaPartitionTable)
         && dataPartitionTable.equals(that.dataPartitionTable);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(isPredeleted, regionGroupMap, schemaPartitionTable, dataPartitionTable);
+    return Objects.hash(isPredeleted, regionInfoMap, schemaPartitionTable, dataPartitionTable);
   }
 }

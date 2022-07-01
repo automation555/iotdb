@@ -29,6 +29,16 @@ struct TDataNodeRegisterReq {
   2: optional map<string, TStorageGroupSchema> statusMap
 }
 
+struct TDataNodeRemoveReq {
+  1: required list<common.TDataNodeLocation> dataNodeLocations
+}
+
+struct TRegionMigrateResultReportReq {
+  1: required common.TConsensusGroupId regionId
+  2: required common.TSStatus migrateResult
+  3: optional map<common.TDataNodeLocation, common.TRegionMigrateFailedType> failedNodeAndReason
+}
+
 struct TDataNodeActiveReq {
   1: required common.TDataNodeLocation location
   2: required i32 dataNodeId
@@ -49,6 +59,11 @@ struct TDataNodeRegisterResp {
   4: optional TGlobalConfig globalConfig
 }
 
+struct TDataNodeRemoveResp {
+  1: required common.TSStatus status
+  2: optional map<common.TDataNodeLocation, common.TSStatus> nodeToStatus
+  3: optional TGlobalConfig globalConfig
+}
 struct TDataNodeInfoResp {
   1: required common.TSStatus status
   // map<DataNodeId, DataNodeLocation>
@@ -67,6 +82,12 @@ struct TDeleteStorageGroupReq {
 struct TDeleteStorageGroupsReq {
   1: required list<string> prefixPathList
 }
+
+struct TSetTTLReq {
+  1: required string storageGroup
+  2: required i64 TTL
+}
+
 
 struct TSetSchemaReplicationFactorReq {
   1: required string storageGroup
@@ -236,24 +257,19 @@ struct TShowRegionResp {
   2: optional list<common.TRegionInfo> regionInfoList;
 }
 
-struct TRegionRouteMapResp {
-  1: required common.TSStatus status
-  // For version stamp
-  2: optional i64 timestamp
-  // The routing policy of read/write requests for each RegionGroup is based on the order in the TRegionReplicaSet.
-  // The replica with higher sorting result in TRegionReplicaSet will have higher priority.
-  3: optional map<common.TConsensusGroupId, common.TRegionReplicaSet> regionRouteMap
-}
-
 service IConfigNodeRPCService {
 
   /* DataNode */
 
   TDataNodeRegisterResp registerDataNode(TDataNodeRegisterReq req)
 
+  TDataNodeRemoveResp removeDataNode(TDataNodeRemoveReq req)
+
   common.TSStatus activeDataNode(TDataNodeActiveReq req)
 
   TDataNodeInfoResp getDataNodeInfo(i32 dataNodeId)
+
+  common.TSStatus reportRegionMigrateResult(TRegionMigrateResultReportReq req)
 
   /* Show Cluster */
   TClusterNodeInfos getAllClusterNodeInfos()
@@ -266,7 +282,7 @@ service IConfigNodeRPCService {
 
   common.TSStatus deleteStorageGroups(TDeleteStorageGroupsReq req)
 
-  common.TSStatus setTTL(common.TSetTTLReq req)
+  common.TSStatus setTTL(TSetTTLReq req)
 
   common.TSStatus setSchemaReplicationFactor(TSetSchemaReplicationFactorReq req)
 
@@ -310,8 +326,6 @@ service IConfigNodeRPCService {
 
   common.TSStatus addConsensusGroup(TConfigNodeRegisterResp req)
 
-  common.TSStatus notifyRegisterSuccess()
-
   common.TSStatus removeConfigNode(common.TConfigNodeLocation configNodeLocation)
 
   common.TSStatus stopConfigNode(common.TConfigNodeLocation configNodeLocation)
@@ -330,12 +344,7 @@ service IConfigNodeRPCService {
 
   TShowRegionResp showRegion(TShowRegionReq req)
 
-  /* Routing */
-
-  TRegionRouteMapResp getLatestRegionRouteMap()
-
   /* Get confignode heartbeat */
-
   i64 getConfigNodeHeartBeat(i64 timestamp)
 
 }
