@@ -19,7 +19,7 @@
 
 package org.apache.iotdb.db.engine.storagegroup;
 
-import org.apache.iotdb.commons.utils.TestOnly;
+import org.apache.iotdb.db.utils.TestOnly;
 import org.apache.iotdb.tsfile.exception.NotImplementedException;
 
 import org.slf4j.Logger;
@@ -68,6 +68,9 @@ public class TsFileResourceList implements List<TsFileResource> {
    * @param newNode the file to insert
    */
   public void insertAfter(TsFileResource node, TsFileResource newNode) {
+    if (node.equals(newNode)) {
+      return;
+    }
     newNode.prev = node;
     newNode.next = node.next;
     if (node.next == null) {
