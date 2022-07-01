@@ -236,6 +236,12 @@ struct TShowRegionResp {
   2: optional list<common.TRegionInfo> regionInfoList;
 }
 
+// show datanodes
+struct TShowDataNodesResp {
+  1: required common.TSStatus status
+  2: optional list<common.TDataNodesInfo> dataNodesInfoList
+}
+
 struct TRegionRouteMapResp {
   1: required common.TSStatus status
   // For version stamp
@@ -337,6 +343,10 @@ service IConfigNodeRPCService {
   /* Get confignode heartbeat */
 
   i64 getConfigNodeHeartBeat(i64 timestamp)
+
+  /* Show DataNodes */
+
+  TShowDataNodesResp showDataNodes()
 
 }
 
