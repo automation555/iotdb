@@ -18,31 +18,43 @@
  */
 package org.apache.iotdb.confignode.conf;
 
+import org.apache.iotdb.common.rpc.thrift.TConfigNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TEndPoint;
 import org.apache.iotdb.commons.conf.IoTDBConstant;
-import org.apache.iotdb.confignode.manager.load.balancer.RouteBalancer;
 import org.apache.iotdb.consensus.ConsensusFactory;
 import org.apache.iotdb.rpc.RpcUtils;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 public class ConfigNodeConfig {
 
   /** could set ip or hostname */
-  private String internalAddress = "0.0.0.0";
+  private String rpcAddress = "0.0.0.0";
 
   /** used for communication between data node and config node */
-  private int internalPort = 22277;
+  private int rpcPort = 22277;
 
   /** used for communication between config node and config node */
   private int consensusPort = 22278;
 
   /** Used for connecting to the ConfigNodeGroup */
-  private TEndPoint targetConfigNode = new TEndPoint("0.0.0.0", 22277);
+  private List<TConfigNodeLocation> targetConfigNodeList =
+      Arrays.asList(
+          new TConfigNodeLocation(
+              0, new TEndPoint("0.0.0.0", 22277), new TEndPoint("0.0.0.0", 22278)));
+
+  /** Mark if the ConfigNode needs to apply */
+  private boolean needApply = false;
 
   // TODO: Read from iotdb-confignode.properties
   private int partitionRegionId = 0;
+
+  /** Used for building the PartitionRegion */
+  private List<TConfigNodeLocation> configNodeList = new ArrayList<>();
 
   /** Thrift socket and connection timeout between nodes */
   private int connectionTimeoutInMS = (int) TimeUnit.SECONDS.toMillis(20);
@@ -50,17 +62,11 @@ public class ConfigNodeConfig {
   /** ConfigNodeGroup consensus protocol */
   private String configNodeConsensusProtocolClass = ConsensusFactory.RatisConsensus;
 
-  /** DataNode schema region consensus protocol */
-  private String schemaRegionConsensusProtocolClass = ConsensusFactory.StandAloneConsensus;
-
-  /** The maximum number of SchemaRegion expected to be managed by each DataNode. */
-  private double schemaRegionPerDataNode = 1.0;
-
   /** DataNode data region consensus protocol */
   private String dataRegionConsensusProtocolClass = ConsensusFactory.StandAloneConsensus;
 
-  /** The maximum number of SchemaRegion expected to be managed by each DataNode. */
-  private double dataRegionPerProcessor = 0.5;
+  /** DataNode schema region consensus protocol */
+  private String schemaRegionConsensusProtocolClass = ConsensusFactory.StandAloneConsensus;
 
   /**
    * ClientManager will have so many selector threads (TAsyncClientManager) to distribute to its
@@ -137,10 +143,7 @@ public class ConfigNodeConfig {
   /** The heartbeat interval in milliseconds */
   private long heartbeatInterval = 1000;
 
-  /** The routing policy of read/write requests */
-  private String routingPolicy = RouteBalancer.greedyPolicy;
-
-  public ConfigNodeConfig() {
+  ConfigNodeConfig() {
     // empty constructor
   }
 
@@ -168,20 +171,20 @@ public class ConfigNodeConfig {
     return dir;
   }
 
-  public String getInternalAddress() {
-    return internalAddress;
+  public String getRpcAddress() {
+    return rpcAddress;
   }
 
-  public void setInternalAddress(String internalAddress) {
-    this.internalAddress = internalAddress;
+  public void setRpcAddress(String rpcAddress) {
+    this.rpcAddress = rpcAddress;
   }
 
-  public int getInternalPort() {
-    return internalPort;
+  public int getRpcPort() {
+    return rpcPort;
   }
 
-  public void setInternalPort(int internalPort) {
-    this.internalPort = internalPort;
+  public void setRpcPort(int rpcPort) {
+    this.rpcPort = rpcPort;
   }
 
   public int getConsensusPort() {
@@ -192,12 +195,20 @@ public class ConfigNodeConfig {
     this.consensusPort = consensusPort;
   }
 
-  public TEndPoint getTargetConfigNode() {
-    return targetConfigNode;
+  public boolean isNeedApply() {
+    return needApply;
   }
 
-  public void setTargetConfigNode(TEndPoint targetConfigNode) {
-    this.targetConfigNode = targetConfigNode;
+  public void setNeedApply(boolean needApply) {
+    this.needApply = needApply;
+  }
+
+  public List<TConfigNodeLocation> getTargetConfigNodeList() {
+    return targetConfigNodeList;
+  }
+
+  public void setTargetConfigNodeList(List<TConfigNodeLocation> targetConfigNodeList) {
+    this.targetConfigNodeList = targetConfigNodeList;
   }
 
   public int getPartitionRegionId() {
@@ -206,6 +217,14 @@ public class ConfigNodeConfig {
 
   public void setPartitionRegionId(int partitionRegionId) {
     this.partitionRegionId = partitionRegionId;
+  }
+
+  public List<TConfigNodeLocation> getConfigNodeList() {
+    return configNodeList;
+  }
+
+  public void setConfigNodeList(List<TConfigNodeLocation> configNodeList) {
+    this.configNodeList = configNodeList;
   }
 
   public int getSeriesPartitionSlotNum() {
@@ -305,22 +324,6 @@ public class ConfigNodeConfig {
     this.configNodeConsensusProtocolClass = configNodeConsensusProtocolClass;
   }
 
-  public String getSchemaRegionConsensusProtocolClass() {
-    return schemaRegionConsensusProtocolClass;
-  }
-
-  public void setSchemaRegionConsensusProtocolClass(String schemaRegionConsensusProtocolClass) {
-    this.schemaRegionConsensusProtocolClass = schemaRegionConsensusProtocolClass;
-  }
-
-  public double getSchemaRegionPerDataNode() {
-    return schemaRegionPerDataNode;
-  }
-
-  public void setSchemaRegionPerDataNode(double schemaRegionPerDataNode) {
-    this.schemaRegionPerDataNode = schemaRegionPerDataNode;
-  }
-
   public String getDataRegionConsensusProtocolClass() {
     return dataRegionConsensusProtocolClass;
   }
@@ -329,12 +332,12 @@ public class ConfigNodeConfig {
     this.dataRegionConsensusProtocolClass = dataRegionConsensusProtocolClass;
   }
 
-  public double getDataRegionPerProcessor() {
-    return dataRegionPerProcessor;
+  public String getSchemaRegionConsensusProtocolClass() {
+    return schemaRegionConsensusProtocolClass;
   }
 
-  public void setDataRegionPerProcessor(double dataRegionPerProcessor) {
-    this.dataRegionPerProcessor = dataRegionPerProcessor;
+  public void setSchemaRegionConsensusProtocolClass(String schemaRegionConsensusProtocolClass) {
+    this.schemaRegionConsensusProtocolClass = schemaRegionConsensusProtocolClass;
   }
 
   public int getThriftServerAwaitTimeForStopService() {
@@ -419,13 +422,5 @@ public class ConfigNodeConfig {
 
   public void setHeartbeatInterval(long heartbeatInterval) {
     this.heartbeatInterval = heartbeatInterval;
-  }
-
-  public String getRoutingPolicy() {
-    return routingPolicy;
-  }
-
-  public void setRoutingPolicy(String routingPolicy) {
-    this.routingPolicy = routingPolicy;
   }
 }

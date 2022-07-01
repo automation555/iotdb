@@ -24,6 +24,7 @@ import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.commons.client.IClientManager;
 import org.apache.iotdb.commons.client.sync.SyncConfigNodeIServiceClient;
 import org.apache.iotdb.commons.utils.StatusUtils;
+import org.apache.iotdb.confignode.rpc.thrift.TConfigNodeConfigurationResp;
 import org.apache.iotdb.confignode.rpc.thrift.TConfigNodeRegisterReq;
 import org.apache.iotdb.confignode.rpc.thrift.TConfigNodeRegisterResp;
 import org.apache.iotdb.db.client.DataNodeClientPoolFactory;
@@ -62,6 +63,26 @@ public class SyncConfigNodeClientPool {
     }
   }
 
+  /** Get target ConfigNode configuration */
+  public TConfigNodeConfigurationResp getConfigNodeConfiguration(
+      TConfigNodeLocation configNodeLocation) {
+    // TODO: Unified retry logic
+    for (int retry = 0; retry < retryNum; retry++) {
+      try (SyncConfigNodeIServiceClient client =
+          clientManager.borrowClient(configNodeLocation.getInternalEndPoint())) {
+        return client.getConfigNodeConfiguration(configNodeLocation);
+      } catch (Exception e) {
+        LOGGER.warn("Get ConfigNode configuration failed, retrying...", e);
+        doRetryWait(retry);
+      }
+    }
+    LOGGER.error("Get ConfigNode configuration failed");
+    return new TConfigNodeConfigurationResp()
+        .setStatus(
+            new TSStatus(TSStatusCode.ALL_RETRY_FAILED.getStatusCode())
+                .setMessage("All retry failed."));
+  }
+
   /** Only use registerConfigNode when the ConfigNode is first startup. */
   public TConfigNodeRegisterResp registerConfigNode(
       TEndPoint endPoint, TConfigNodeRegisterReq req) {
@@ -83,45 +104,32 @@ public class SyncConfigNodeClientPool {
                 .setMessage("All retry failed due to " + lastException.getMessage()));
   }
 
-  public void addConsensusGroup(TEndPoint endPoint, List<TConfigNodeLocation> configNodeLocation)
-      throws Exception {
+  public TSStatus addConsensusGroup(
+      TEndPoint endPoint, List<TConfigNodeLocation> configNodeLocation) {
     // TODO: Unified retry logic
-    Exception lastException = null;
+    Throwable lastException = null;
     for (int retry = 0; retry < retryNum; retry++) {
       try (SyncConfigNodeIServiceClient client = clientManager.borrowClient(endPoint)) {
         TConfigNodeRegisterResp registerResp = new TConfigNodeRegisterResp();
         registerResp.setConfigNodeList(configNodeLocation);
         registerResp.setStatus(StatusUtils.OK);
-        client.addConsensusGroup(registerResp);
-        return;
-      } catch (Exception e) {
+        return client.addConsensusGroup(registerResp);
+      } catch (Throwable e) {
         lastException = e;
         LOGGER.warn(
             "Add Consensus Group failed because {}, retrying {} ...", e.getMessage(), retry);
         doRetryWait(retry);
       }
     }
-
-    throw lastException;
-  }
-
-  public void notifyRegisterSuccess(TEndPoint endPoint) {
-    // TODO: Unified retry logic
-    for (int retry = 0; retry < retryNum; retry++) {
-      try (SyncConfigNodeIServiceClient client = clientManager.borrowClient(endPoint)) {
-        client.notifyRegisterSuccess();
-        return;
-      } catch (Exception e) {
-        LOGGER.warn("Notify register failed because {}, retrying {} ...", e.getMessage(), retry);
-        doRetryWait(retry);
-      }
-    }
+    LOGGER.error("Add ConsensusGroup failed", lastException);
+    return new TSStatus(TSStatusCode.ALL_RETRY_FAILED.getStatusCode())
+        .setMessage("All retry failed due to " + lastException.getMessage());
   }
 
   /**
    * ConfigNode Leader stop any ConfigNode in the cluster
    *
-   * @param configNodeLocations target_config_nodes of confignode-system.properties
+   * @param configNodeLocations confignode_list of confignode-system.properties
    * @param configNodeLocation To be removed ConfigNode
    * @return SUCCESS_STATUS: remove ConfigNode success, other status remove failed
    */

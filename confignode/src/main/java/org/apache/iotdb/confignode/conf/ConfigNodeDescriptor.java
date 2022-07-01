@@ -19,7 +19,6 @@
 package org.apache.iotdb.confignode.conf;
 
 import org.apache.iotdb.commons.conf.CommonDescriptor;
-import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.exception.BadNodeUrlException;
 import org.apache.iotdb.commons.utils.NodeUrlUtils;
 import org.apache.iotdb.metrics.config.MetricConfigDescriptor;
@@ -107,23 +106,19 @@ public class ConfigNodeDescriptor {
       Properties properties = new Properties();
       properties.load(inputStream);
 
-      conf.setInternalAddress(
-          properties.getProperty(IoTDBConstant.INTERNAL_ADDRESS, conf.getInternalAddress()));
+      conf.setRpcAddress(properties.getProperty("rpc_address", conf.getRpcAddress()));
 
-      conf.setInternalPort(
-          Integer.parseInt(
-              properties.getProperty(
-                  IoTDBConstant.INTERNAL_PORT, String.valueOf(conf.getInternalPort()))));
+      conf.setRpcPort(
+          Integer.parseInt(properties.getProperty("rpc_port", String.valueOf(conf.getRpcPort()))));
 
       conf.setConsensusPort(
           Integer.parseInt(
-              properties.getProperty(
-                  IoTDBConstant.CONSENSUS_PORT, String.valueOf(conf.getConsensusPort()))));
+              properties.getProperty("consensus_port", String.valueOf(conf.getConsensusPort()))));
 
-      // TODO: Enable multiple target_config_nodes
-      String targetConfigNodes = properties.getProperty(IoTDBConstant.TARGET_CONFIG_NODES, null);
-      if (targetConfigNodes != null) {
-        conf.setTargetConfigNode(NodeUrlUtils.parseTEndPointUrl(targetConfigNodes));
+      String targetConfigNodeList = properties.getProperty("config_nodes", null);
+      if (targetConfigNodeList != null) {
+        conf.setTargetConfigNodeList(
+            NodeUrlUtils.parseTConfigNodeLocationUrls(targetConfigNodeList));
       }
 
       conf.setSeriesPartitionSlotNum(
@@ -139,25 +134,14 @@ public class ConfigNodeDescriptor {
           properties.getProperty(
               "config_node_consensus_protocol_class", conf.getConfigNodeConsensusProtocolClass()));
 
-      conf.setSchemaRegionConsensusProtocolClass(
-          properties.getProperty(
-              "schema_region_consensus_protocol_class",
-              conf.getSchemaRegionConsensusProtocolClass()));
-
-      conf.setSchemaRegionPerDataNode(
-          Double.parseDouble(
-              properties.getProperty(
-                  "schema_region_per_data_node",
-                  String.valueOf(conf.getSchemaRegionPerDataNode()))));
-
       conf.setDataRegionConsensusProtocolClass(
           properties.getProperty(
               "data_region_consensus_protocol_class", conf.getDataRegionConsensusProtocolClass()));
 
-      conf.setDataRegionPerProcessor(
-          Double.parseDouble(
-              properties.getProperty(
-                  "data_region_per_processor", String.valueOf(conf.getDataRegionPerProcessor()))));
+      conf.setSchemaRegionConsensusProtocolClass(
+          properties.getProperty(
+              "schema_region_consensus_protocol_class",
+              conf.getSchemaRegionConsensusProtocolClass()));
 
       conf.setRpcAdvancedCompressionEnable(
           Boolean.parseBoolean(
@@ -227,8 +211,6 @@ public class ConfigNodeDescriptor {
               properties.getProperty(
                   "heartbeat_interval", String.valueOf(conf.getHeartbeatInterval()))));
 
-      conf.setRoutingPolicy(properties.getProperty("routing_policy", conf.getRoutingPolicy()));
-
       // commons
       commonDescriptor.loadCommonProps(properties);
       commonDescriptor.initCommonConfigDir(conf.getSystemDir());
@@ -260,18 +242,8 @@ public class ConfigNodeDescriptor {
           .updatePath(System.getProperty(ConfigNodeConstant.CONFIGNODE_HOME, null));
       MetricConfigDescriptor.getInstance()
           .getMetricConfig()
-          .updateRpcInstance(conf.getInternalAddress(), conf.getInternalPort());
+          .updateRpcInstance(conf.getRpcAddress(), conf.getRpcPort());
     }
-  }
-
-  /**
-   * Check if the current ConfigNode is SeedConfigNode.
-   *
-   * @return True if the target_config_nodes points to itself
-   */
-  public boolean isSeedConfigNode() {
-    return conf.getInternalAddress().equals(conf.getTargetConfigNode().getIp())
-        && conf.getInternalPort() == conf.getTargetConfigNode().getPort();
   }
 
   public static ConfigNodeDescriptor getInstance() {
