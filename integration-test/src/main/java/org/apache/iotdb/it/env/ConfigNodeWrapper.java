@@ -81,21 +81,21 @@ public class ConfigNodeWrapper extends AbstractNodeWrapper {
   }
 
   @Override
-  protected String getStartScriptPath() {
+  protected String[] getStartCmd() {
     String scriptName = "start-confignode.sh";
     if (SystemUtils.IS_OS_WINDOWS) {
       scriptName = "start-confignode.bat";
     }
-    return workDirFilePath("confignode" + File.separator + "sbin", scriptName);
+    return new String[] {workDirFilePath("confignode" + File.separator + "sbin", scriptName)};
   }
 
   @Override
-  protected String getStopScriptPath() {
+  protected String[] getStopCmd() {
     String scriptName = "stop-confignode.sh";
     if (SystemUtils.IS_OS_WINDOWS) {
       scriptName = "stop-confignode.bat";
     }
-    return workDirFilePath("confignode" + File.separator + "sbin", scriptName);
+    return new String[] {workDirFilePath("confignode" + File.separator + "sbin", scriptName)};
   }
 
   @Override

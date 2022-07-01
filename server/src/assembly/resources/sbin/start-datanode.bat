@@ -21,7 +21,7 @@
 echo ````````````````````````
 echo Starting IoTDB DataNode
 echo ````````````````````````
-
+time /T
 PATH %PATH%;%JAVA_HOME%\bin\
 set "FULL_VERSION="
 set "MAJOR_VERSION="
@@ -119,7 +119,8 @@ goto :eof
 :okClasspath
 
 rem echo CLASSPATH: %CLASSPATH%
-
+echo "before start JVM"
+time /T
 "%JAVA_HOME%\bin\java" %ILLEGAL_ACCESS_PARAMS% %JAVA_OPTS% %IOTDB_HEAP_OPTS% -cp %CLASSPATH% %IOTDB_JMX_OPTS% %MAIN_CLASS% %CONF_PARAMS%
 goto finally
 

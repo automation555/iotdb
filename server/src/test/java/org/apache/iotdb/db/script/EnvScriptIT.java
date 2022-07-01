@@ -20,6 +20,7 @@ package org.apache.iotdb.db.script;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.BufferedReader;
@@ -43,6 +44,7 @@ public class EnvScriptIT {
   @After
   public void tearDown() {}
 
+  @Ignore
   @Test
   public void test() throws IOException {
     String os = System.getProperty("os.name").toLowerCase();
