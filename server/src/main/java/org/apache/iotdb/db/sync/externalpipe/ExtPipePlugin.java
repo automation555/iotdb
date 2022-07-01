@@ -529,6 +529,9 @@ public class ExtPipePlugin {
       for (Pair<MeasurementPath, List<TimeValuePair>> dataPair : operation.getDataList()) {
         MeasurementPath path = dataPair.left;
         for (TimeValuePair tvPair : dataPair.right) {
+          if (tvPair == null) {
+            continue;
+          }
           String[] nodes = path.getNodes();
           long timestampInMs = tvPair.getTimestamp() / timestampDivisor;
           switch (tvPair.getValue().getDataType()) {
