@@ -20,11 +20,13 @@
 package org.apache.iotdb.confignode.manager;
 
 import org.apache.iotdb.common.rpc.thrift.TConfigNodeLocation;
+import org.apache.iotdb.common.rpc.thrift.TConsensusGroupType;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeInfo;
 import org.apache.iotdb.common.rpc.thrift.TDataNodeLocation;
 import org.apache.iotdb.common.rpc.thrift.TFlushReq;
 import org.apache.iotdb.common.rpc.thrift.TSStatus;
 import org.apache.iotdb.common.rpc.thrift.TSeriesPartitionSlot;
+import org.apache.iotdb.common.rpc.thrift.TSetTTLReq;
 import org.apache.iotdb.commons.conf.CommonDescriptor;
 import org.apache.iotdb.commons.conf.IoTDBConstant;
 import org.apache.iotdb.commons.exception.IllegalPathException;
@@ -32,6 +34,7 @@ import org.apache.iotdb.commons.path.PartialPath;
 import org.apache.iotdb.commons.utils.AuthUtils;
 import org.apache.iotdb.commons.utils.PathUtils;
 import org.apache.iotdb.commons.utils.StatusUtils;
+import org.apache.iotdb.confignode.client.SyncDataNodeClientPool;
 import org.apache.iotdb.confignode.conf.ConfigNodeConfig;
 import org.apache.iotdb.confignode.conf.ConfigNodeDescriptor;
 import org.apache.iotdb.confignode.consensus.request.auth.AuthorPlan;
@@ -44,6 +47,7 @@ import org.apache.iotdb.confignode.consensus.request.read.GetOrCreateSchemaParti
 import org.apache.iotdb.confignode.consensus.request.read.GetRegionInfoListPlan;
 import org.apache.iotdb.confignode.consensus.request.read.GetSchemaPartitionPlan;
 import org.apache.iotdb.confignode.consensus.request.read.GetStorageGroupPlan;
+import org.apache.iotdb.confignode.consensus.request.write.ActivateDataNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.RegisterDataNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.RemoveConfigNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.SetDataReplicationFactorPlan;
@@ -74,7 +78,6 @@ import org.apache.iotdb.confignode.rpc.thrift.TConfigNodeRegisterReq;
 import org.apache.iotdb.confignode.rpc.thrift.TConfigNodeRegisterResp;
 import org.apache.iotdb.confignode.rpc.thrift.TDataPartitionResp;
 import org.apache.iotdb.confignode.rpc.thrift.TPermissionInfoResp;
-import org.apache.iotdb.confignode.rpc.thrift.TRegionRouteMapResp;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaNodeManagementResp;
 import org.apache.iotdb.confignode.rpc.thrift.TSchemaPartitionResp;
 import org.apache.iotdb.confignode.rpc.thrift.TStorageGroupSchema;
@@ -172,9 +175,18 @@ public class ConfigManager implements IManager {
     } else {
       DataNodeConfigurationResp dataSet = new DataNodeConfigurationResp();
       dataSet.setStatus(status);
-      dataSet.setConfigNodeList(nodeManager.getRegisteredConfigNodes());
+      dataSet.setConfigNodeList(nodeManager.getOnlineConfigNodes());
       return dataSet;
     }
+  }
+
+  @Override
+  public TSStatus activateDataNode(ActivateDataNodePlan activateDataNodePlan) {
+    TSStatus status = confirmLeader();
+    if (status.getCode() == TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
+      return nodeManager.activateDataNode(activateDataNodePlan);
+    }
+    return status;
   }
 
   @Override
@@ -193,7 +205,7 @@ public class ConfigManager implements IManager {
   public TClusterNodeInfos getAllClusterNodeInfos() {
     TSStatus status = confirmLeader();
     if (status.getCode() == TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-      List<TConfigNodeLocation> configNodeLocations = getNodeManager().getRegisteredConfigNodes();
+      List<TConfigNodeLocation> configNodeLocations = getNodeManager().getOnlineConfigNodes();
       List<TDataNodeLocation> dataNodeInfoLocations =
           getNodeManager().getOnlineDataNodes(-1).stream()
               .map(TDataNodeInfo::getLocation)
@@ -202,8 +214,9 @@ public class ConfigManager implements IManager {
       getLoadManager()
           .getHeartbeatCacheMap()
           .forEach(
-              (nodeId, heartbeatCache) ->
-                  nodeStatus.put(nodeId, heartbeatCache.getNodeStatus().getStatus()));
+              (nodeId, heartbeatCache) -> {
+                nodeStatus.put(nodeId, heartbeatCache.getNodeStatus().getStatus());
+              });
       return new TClusterNodeInfos(status, configNodeLocations, dataNodeInfoLocations, nodeStatus);
     } else {
       return new TClusterNodeInfos(status, new ArrayList<>(), new ArrayList<>(), new HashMap<>());
@@ -214,6 +227,32 @@ public class ConfigManager implements IManager {
   public TSStatus setTTL(SetTTLPlan setTTLPlan) {
     TSStatus status = confirmLeader();
     if (status.getCode() == TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
+      if (!clusterSchemaManager
+          .getStorageGroupNames()
+          .contains(setTTLPlan.getStorageGroup().toString())) {
+        return RpcUtils.getStatus(
+            TSStatusCode.STORAGE_GROUP_NOT_EXIST,
+            "storageGroup " + setTTLPlan.getStorageGroup() + " does not exist");
+      }
+      Set<TDataNodeLocation> dataNodeLocations =
+          getPartitionManager()
+              .getDataNodeLocation(setTTLPlan.getStorageGroup(), TConsensusGroupType.DataRegion);
+      if (dataNodeLocations.size() != 0) {
+        for (TDataNodeLocation dataNodeLocation : dataNodeLocations) {
+          List<TDataNodeInfo> onlineDataNodes =
+              getNodeManager().getOnlineDataNodes(dataNodeLocation.getDataNodeId());
+          for (TDataNodeInfo dataNodeInfo : onlineDataNodes) {
+            status =
+                SyncDataNodeClientPool.getInstance()
+                    .setTTL(
+                        dataNodeInfo.getLocation().getInternalEndPoint(),
+                        new TSetTTLReq(setTTLPlan.getStorageGroup(), setTTLPlan.getTTL()));
+            if (status.getCode() != TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
+              return status;
+            }
+          }
+        }
+      }
       return clusterSchemaManager.setTTL(setTTLPlan);
     } else {
       return status;
@@ -730,28 +769,15 @@ public class ConfigManager implements IManager {
   }
 
   @Override
-  public TRegionRouteMapResp getLatestRegionRouteMap() {
-    TSStatus status = confirmLeader();
-    TRegionRouteMapResp resp = new TRegionRouteMapResp(status);
-
-    if (status.getCode() == TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-      resp.setTimestamp(System.currentTimeMillis());
-      resp.setRegionRouteMap(getLoadManager().genRealTimeRoutingPolicy());
-    }
-
-    return resp;
-  }
-
-  @Override
   public UDFManager getUDFManager() {
     return udfManager;
   }
 
   @Override
-  public DataSet showRegion(GetRegionInfoListPlan getRegionInfoListPlan) {
+  public DataSet showRegion(GetRegionInfoListPlan getRegionsinfoReq) {
     TSStatus status = confirmLeader();
     if (status.getCode() == TSStatusCode.SUCCESS_STATUS.getStatusCode()) {
-      return partitionManager.getRegionInfoList(getRegionInfoListPlan);
+      return partitionManager.getRegionInfoList(getRegionsinfoReq);
     } else {
       RegionInfoListResp regionResp = new RegionInfoListResp();
       regionResp.setStatus(status);

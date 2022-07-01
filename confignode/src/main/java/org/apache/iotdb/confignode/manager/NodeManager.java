@@ -28,12 +28,12 @@ import org.apache.iotdb.confignode.client.AsyncDataNodeClientPool;
 import org.apache.iotdb.confignode.client.handlers.FlushHandler;
 import org.apache.iotdb.confignode.conf.ConfigNodeDescriptor;
 import org.apache.iotdb.confignode.consensus.request.read.GetDataNodeInfoPlan;
+import org.apache.iotdb.confignode.consensus.request.write.ActivateDataNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.ApplyConfigNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.RegisterDataNodePlan;
 import org.apache.iotdb.confignode.consensus.request.write.RemoveConfigNodePlan;
 import org.apache.iotdb.confignode.consensus.response.DataNodeConfigurationResp;
 import org.apache.iotdb.confignode.consensus.response.DataNodeInfosResp;
-import org.apache.iotdb.confignode.manager.load.LoadManager;
 import org.apache.iotdb.confignode.persistence.NodeInfo;
 import org.apache.iotdb.confignode.rpc.thrift.TConfigNodeRegisterReq;
 import org.apache.iotdb.confignode.rpc.thrift.TConfigNodeRegisterResp;
@@ -98,29 +98,42 @@ public class NodeManager {
    */
   public DataSet registerDataNode(RegisterDataNodePlan req) {
     DataNodeConfigurationResp dataSet = new DataNodeConfigurationResp();
-
+    TSStatus status = new TSStatus(TSStatusCode.SUCCESS_STATUS.getStatusCode());
+    status.setMessage("registerDataNode success.");
     if (nodeInfo.isOnlineDataNode(req.getInfo().getLocation())) {
-      // Reset client
-      AsyncDataNodeClientPool.getInstance()
-          .resetClient(req.getInfo().getLocation().getInternalEndPoint());
-
-      TSStatus status = new TSStatus(TSStatusCode.DATANODE_ALREADY_REGISTERED.getStatusCode());
+      status.setCode(TSStatusCode.DATANODE_ALREADY_REGISTERED.getStatusCode());
       status.setMessage("DataNode already registered.");
-      dataSet.setStatus(status);
-    } else {
-      // Persist DataNodeInfo
+    } else if (req.getInfo().getLocation().getDataNodeId() < 0) {
+      // only when new dataNode is registered, generate new dataNodeId
       req.getInfo().getLocation().setDataNodeId(nodeInfo.generateNextNodeId());
-      ConsensusWriteResponse resp = getConsensusManager().write(req);
-      dataSet.setStatus(resp.getStatus());
+      status = getConsensusManager().write(req).getStatus();
+    }
+    dataSet.setStatus(status);
+    dataSet.setDataNodeId(req.getInfo().getLocation().getDataNodeId());
+    dataSet.setConfigNodeList(nodeInfo.getOnlineConfigNodes());
+    setGlobalConfig(dataSet);
+    return dataSet;
+  }
 
+  /**
+   * Active DataNode
+   *
+   * @param req ActiveDataNodeReq
+   * @return TSStatus The TSStatus will be set to SUCCESS_STATUS when active success, and
+   *     DATANODE_ALREADY_REGISTERED when the DataNode is already exist.
+   */
+  public TSStatus activateDataNode(ActivateDataNodePlan req) {
+    TSStatus status = new TSStatus();
+    if (nodeInfo.isOnlineDataNode(req.getInfo().getLocation())) {
+      status.setCode(TSStatusCode.DATANODE_ALREADY_ACTIVATED.getStatusCode());
+      status.setMessage("DataNode already activated.");
+    } else {
+      ConsensusWriteResponse resp = getConsensusManager().write(req);
+      status = resp.getStatus();
       // Adjust the maximum RegionGroup number of each StorageGroup
       getClusterSchemaManager().adjustMaxRegionGroupCount();
     }
-
-    dataSet.setDataNodeId(req.getInfo().getLocation().getDataNodeId());
-    dataSet.setConfigNodeList(nodeInfo.getRegisteredConfigNodes());
-    setGlobalConfig(dataSet);
-    return dataSet;
+    return status;
   }
 
   /**
@@ -178,7 +191,7 @@ public class NodeManager {
     resp.setPartitionRegionId(
         getConsensusManager().getConsensusGroupId().convertToTConsensusGroupId());
 
-    resp.setConfigNodeList(nodeInfo.getRegisteredConfigNodes());
+    resp.setConfigNodeList(nodeInfo.getOnlineConfigNodes());
     return resp;
   }
 
@@ -201,15 +214,15 @@ public class NodeManager {
   public TSStatus removeConfigNode(RemoveConfigNodePlan removeConfigNodePlan) {
     if (removeConfigNodeLock.tryLock()) {
       try {
-        // Check OnlineConfigNodes number
-        if (getLoadManager().getOnlineConfigNodes().size() <= 1) {
+        // Check ConfigNodes number
+        if (getOnlineConfigNodes().size() <= 1) {
           return new TSStatus(TSStatusCode.REMOVE_CONFIGNODE_FAILED.getStatusCode())
               .setMessage(
                   "Remove ConfigNode failed because there is only one ConfigNode in current Cluster.");
         }
 
-        // Check whether the registeredConfigNodes contain the ConfigNode to be removed.
-        if (!getRegisteredConfigNodes().contains(removeConfigNodePlan.getConfigNodeLocation())) {
+        // Check whether the onlineConfigNodes contain the ConfigNode to be removed.
+        if (!getOnlineConfigNodes().contains(removeConfigNodePlan.getConfigNodeLocation())) {
           return new TSStatus(TSStatusCode.REMOVE_CONFIGNODE_FAILED.getStatusCode())
               .setMessage(
                   "Remove ConfigNode failed because the ConfigNode not in current Cluster.");
@@ -253,7 +266,7 @@ public class NodeManager {
   private TSStatus transferLeader(
       RemoveConfigNodePlan removeConfigNodePlan, ConsensusGroupId groupId) {
     TConfigNodeLocation newLeader =
-        getLoadManager().getOnlineConfigNodes().stream()
+        getOnlineConfigNodes().stream()
             .filter(e -> !e.equals(removeConfigNodePlan.getConfigNodeLocation()))
             .findAny()
             .get();
@@ -273,8 +286,8 @@ public class NodeManager {
                 + ".");
   }
 
-  public List<TConfigNodeLocation> getRegisteredConfigNodes() {
-    return nodeInfo.getRegisteredConfigNodes();
+  public List<TConfigNodeLocation> getOnlineConfigNodes() {
+    return nodeInfo.getOnlineConfigNodes();
   }
 
   private ConsensusManager getConsensusManager() {
@@ -369,9 +382,5 @@ public class NodeManager {
       LOGGER.error("NodeManager was interrupted during flushing on data nodes", e);
     }
     return dataNodeResponseStatus;
-  }
-
-  private LoadManager getLoadManager() {
-    return configManager.getLoadManager();
   }
 }
