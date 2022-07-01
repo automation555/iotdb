@@ -18,7 +18,6 @@
  */
 package org.apache.iotdb.db.metadata.mtree.store.disk.schemafile;
 
-import org.apache.iotdb.commons.conf.CommonDescriptor;
 import org.apache.iotdb.commons.exception.MetadataException;
 import org.apache.iotdb.commons.file.SystemFileFactory;
 import org.apache.iotdb.commons.utils.PathUtils;
@@ -176,7 +175,9 @@ public class SchemaFile implements ISchemaFile {
 
     if (channel.size() <= 0) {
       channel.close();
-      throw new SchemaFileNotExists(file.getAbsolutePath());
+      throw new MetadataException(
+          String.format(
+              "Schema File [%s] is empty and cannot be sketched.", file.getAbsolutePath()));
     }
 
     initFileHeader();
@@ -188,7 +189,7 @@ public class SchemaFile implements ISchemaFile {
         sgName,
         schemaRegionId,
         true,
-        CommonDescriptor.getInstance().getConfig().getDefaultTTL(),
+        IoTDBDescriptor.getInstance().getConfig().getDefaultTTL(),
         false);
   }
 
@@ -207,7 +208,7 @@ public class SchemaFile implements ISchemaFile {
   @Override
   public IMNode init() throws MetadataException {
     IMNode resNode;
-    String[] sgPathNodes = PathUtils.splitPathToDetachedNodes(storageGroupName);
+    String[] sgPathNodes = PathUtils.splitPathToDetachedPath(storageGroupName);
     if (isEntity) {
       resNode =
           setNodeAddress(
