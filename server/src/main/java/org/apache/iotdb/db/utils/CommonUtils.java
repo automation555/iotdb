@@ -18,10 +18,10 @@
  */
 package org.apache.iotdb.db.utils;
 
-import org.apache.iotdb.commons.utils.TestOnly;
 import org.apache.iotdb.db.exception.query.QueryProcessException;
 import org.apache.iotdb.db.qp.constant.SQLConstant;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
+import org.apache.iotdb.tsfile.fileSystem.FSPath;
 import org.apache.iotdb.tsfile.utils.Binary;
 
 import com.google.common.base.Throwables;
@@ -34,14 +34,60 @@ import io.airlift.airline.ParseCommandUnrecognizedException;
 import io.airlift.airline.ParseOptionConversionException;
 import io.airlift.airline.ParseOptionMissingException;
 import io.airlift.airline.ParseOptionMissingValueException;
-import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.io.FileUtils;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.List;
 
 @SuppressWarnings("java:S106") // for console outputs
 public class CommonUtils {
 
+  private static final int CPUS = Runtime.getRuntime().availableProcessors();
+
+  /** Default executor pool maximum size. */
+  public static final int MAX_EXECUTOR_POOL_SIZE = Math.max(100, getCpuCores() * 5);
+
   private CommonUtils() {}
+
+  /**
+   * get JDK version.
+   *
+   * @return JDK version (int type)
+   */
+  public static int getJdkVersion() {
+    String[] javaVersionElements = System.getProperty("java.version").split("\\.");
+    if (Integer.parseInt(javaVersionElements[0]) == 1) {
+      return Integer.parseInt(javaVersionElements[1]);
+    } else {
+      return Integer.parseInt(javaVersionElements[0]);
+    }
+  }
+
+  /**
+   * NOTICE: This method is currently used only for data dir, thus using FSFactory to get file
+   *
+   * @param dir directory path
+   * @return
+   */
+  public static long getUsableSpace(FSPath dir) {
+    File dirFile = dir.toFile();
+    dirFile.mkdirs();
+    return dirFile.getFreeSpace();
+  }
+
+  public static boolean hasSpace(FSPath dir) {
+    return getUsableSpace(dir) > 0;
+  }
+
+  public static long getOccupiedSpace(FSPath folderPath) throws IOException {
+    File file = folderPath.toFile();
+    if (file.isDirectory()) {
+      return FileUtils.sizeOfDirectory(file);
+    } else {
+      return file.length();
+    }
+  }
 
   public static Object parseValue(TSDataType dataType, String value) throws QueryProcessException {
     try {
@@ -52,43 +98,13 @@ public class CommonUtils {
         case BOOLEAN:
           return parseBoolean(value);
         case INT32:
-          try {
-            return Integer.parseInt(StringUtils.trim(value));
-          } catch (NumberFormatException e) {
-            throw new NumberFormatException(
-                "data type is not consistent, input " + value + ", registered " + dataType);
-          }
+          return Integer.parseInt(value);
         case INT64:
-          try {
-            return Long.parseLong(StringUtils.trim(value));
-          } catch (NumberFormatException e) {
-            throw new NumberFormatException(
-                "data type is not consistent, input " + value + ", registered " + dataType);
-          }
+          return Long.parseLong(value);
         case FLOAT:
-          float f;
-          try {
-            f = Float.parseFloat(value);
-          } catch (NumberFormatException e) {
-            throw new NumberFormatException(
-                "data type is not consistent, input " + value + ", registered " + dataType);
-          }
-          if (Float.isInfinite(f)) {
-            throw new NumberFormatException("The input float value is Infinity");
-          }
-          return f;
+          return Float.parseFloat(value);
         case DOUBLE:
-          double d;
-          try {
-            d = Double.parseDouble(value);
-          } catch (NumberFormatException e) {
-            throw new NumberFormatException(
-                "data type is not consistent, input " + value + ", registered " + dataType);
-          }
-          if (Double.isInfinite(d)) {
-            throw new NumberFormatException("The input double value is Infinity");
-          }
-          return d;
+          return Double.parseDouble(value);
         case TEXT:
           if ((value.startsWith(SQLConstant.QUOTE) && value.endsWith(SQLConstant.QUOTE))
               || (value.startsWith(SQLConstant.DQUOTE) && value.endsWith(SQLConstant.DQUOTE))) {
@@ -144,6 +160,14 @@ public class CommonUtils {
     throw new QueryProcessException("The BOOLEAN should be true/TRUE, false/FALSE or 0/1");
   }
 
+  public static int getCpuCores() {
+    return CPUS;
+  }
+
+  public static int getMaxExecutorPoolSize() {
+    return MAX_EXECUTOR_POOL_SIZE;
+  }
+
   public static int runCli(
       List<Class<? extends Runnable>> commands,
       String[] args,
@@ -178,8 +202,8 @@ public class CommonUtils {
   }
 
   private static void badUse(Exception e) {
-    System.out.println("node-tool: " + e.getMessage());
-    System.out.println("See 'node-tool help' or 'node-tool help <command>'.");
+    System.out.println("memory-tool: " + e.getMessage());
+    System.out.println("See 'memory-tool help' or 'memory-tool help <command>'.");
   }
 
   private static void err(Throwable e) {

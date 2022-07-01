@@ -26,75 +26,78 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Locale;
 import org.apache.commons.io.FileUtils;
-import org.apache.iotdb.commons.auth.AuthException;
-import org.apache.iotdb.commons.auth.authorizer.BasicAuthorizer;
-import org.apache.iotdb.commons.auth.authorizer.IAuthorizer;
+import org.apache.iotdb.db.auth.AuthException;
+import org.apache.iotdb.db.auth.authorizer.BasicAuthorizer;
+import org.apache.iotdb.db.auth.authorizer.IAuthorizer;
 import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
-import org.apache.iotdb.db.conf.directories.DirectoryManager;
+import org.apache.iotdb.db.engine.tier.TierManager;
 import org.apache.iotdb.db.engine.StorageEngine;
-import org.apache.iotdb.db.engine.cache.BloomFilterCache;
 import org.apache.iotdb.db.engine.cache.ChunkCache;
 import org.apache.iotdb.db.engine.cache.TimeSeriesMetadataCache;
 import org.apache.iotdb.db.engine.flush.FlushManager;
-import org.apache.iotdb.commons.exception.StartupException;
+import org.apache.iotdb.db.exception.StartupException;
 import org.apache.iotdb.db.exception.StorageEngineException;
+import org.apache.iotdb.db.monitor.StatMonitor;
 import org.apache.iotdb.db.query.context.QueryContext;
 import org.apache.iotdb.db.query.control.FileReaderManager;
 import org.apache.iotdb.db.query.control.QueryResourceManager;
 import org.apache.iotdb.db.service.IoTDB;
-import org.apache.iotdb.db.service.metrics.MetricsService;
-import org.apache.iotdb.db.wal.WALManager;
+import org.apache.iotdb.db.service.MetricsService;
+import org.apache.iotdb.db.writelog.manager.MultiFileLogNodeManager;
 import org.apache.iotdb.jdbc.Config;
+import org.apache.iotdb.tsfile.fileSystem.FSPath;
 import org.junit.Assert;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** This class is used for cleaning test environment in unit test and integration test */
+/**
+ * <p>
+ * This class is used for cleaning test environment in unit test and integration test
+ * </p>
+ */
 public class EnvironmentUtils {
 
-  private static String[] creationSqls =
-      new String[] {
-        "SET STORAGE GROUP TO root.vehicle.d0",
-        "SET STORAGE GROUP TO root.vehicle.d1",
-        "CREATE TIMESERIES root.vehicle.d0.s0 WITH DATATYPE=INT32, ENCODING=RLE",
-        "CREATE TIMESERIES root.vehicle.d0.s1 WITH DATATYPE=INT64, ENCODING=RLE",
-        "CREATE TIMESERIES root.vehicle.d0.s2 WITH DATATYPE=FLOAT, ENCODING=RLE",
-        "CREATE TIMESERIES root.vehicle.d0.s3 WITH DATATYPE=TEXT, ENCODING=PLAIN",
-        "CREATE TIMESERIES root.vehicle.d0.s4 WITH DATATYPE=BOOLEAN, ENCODING=PLAIN"
-      };
+  private static String[] creationSqls = new String[]{
+      "SET STORAGE GROUP TO root.vehicle.d0",
+      "SET STORAGE GROUP TO root.vehicle.d1",
+      "CREATE TIMESERIES root.vehicle.d0.s0 WITH DATATYPE=INT32, ENCODING=RLE",
+      "CREATE TIMESERIES root.vehicle.d0.s1 WITH DATATYPE=INT64, ENCODING=RLE",
+      "CREATE TIMESERIES root.vehicle.d0.s2 WITH DATATYPE=FLOAT, ENCODING=RLE",
+      "CREATE TIMESERIES root.vehicle.d0.s3 WITH DATATYPE=TEXT, ENCODING=PLAIN",
+      "CREATE TIMESERIES root.vehicle.d0.s4 WITH DATATYPE=BOOLEAN, ENCODING=PLAIN"
+  };
 
-  private static String[] dataSet2 =
-      new String[] {
-        "SET STORAGE GROUP TO root.ln.wf01.wt01",
-        "CREATE TIMESERIES root.ln.wf01.wt01.status WITH DATATYPE=BOOLEAN, ENCODING=PLAIN",
-        "CREATE TIMESERIES root.ln.wf01.wt01.temperature WITH DATATYPE=FLOAT, ENCODING=PLAIN",
-        "CREATE TIMESERIES root.ln.wf01.wt01.hardware WITH DATATYPE=INT32, ENCODING=PLAIN",
-        "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
-            + "values(1, 1.1, false, 11)",
-        "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
-            + "values(2, 2.2, true, 22)",
-        "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
-            + "values(3, 3.3, false, 33 )",
-        "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
-            + "values(4, 4.4, false, 44)",
-        "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
-            + "values(5, 5.5, false, 55)"
-      };
+  private static String[] dataSet2 = new String[]{
+      "SET STORAGE GROUP TO root.ln.wf01.wt01",
+      "CREATE TIMESERIES root.ln.wf01.wt01.status WITH DATATYPE=BOOLEAN, ENCODING=PLAIN",
+      "CREATE TIMESERIES root.ln.wf01.wt01.temperature WITH DATATYPE=FLOAT, ENCODING=PLAIN",
+      "CREATE TIMESERIES root.ln.wf01.wt01.hardware WITH DATATYPE=INT32, ENCODING=PLAIN",
+      "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
+          + "values(1, 1.1, false, 11)",
+      "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
+          + "values(2, 2.2, true, 22)",
+      "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
+          + "values(3, 3.3, false, 33 )",
+      "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
+          + "values(4, 4.4, false, 44)",
+      "INSERT INTO root.ln.wf01.wt01(timestamp,temperature,status, hardware) "
+          + "values(5, 5.5, false, 55)"
+  };
 
-  private static String insertTemplate =
-      "INSERT INTO root.vehicle.d0(timestamp,s0,s1,s2,s3,s4)" + " VALUES(%d,%d,%d,%f,%s,%s)";
+  private static String insertTemplate = "INSERT INTO root.vehicle.d0(timestamp,s0,s1,s2,s3,s4)"
+      + " VALUES(%d,%d,%d,%f,%s,%s)";
 
   private static final Logger logger = LoggerFactory.getLogger(EnvironmentUtils.class);
 
   private static IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
-  private static DirectoryManager directoryManager = DirectoryManager.getInstance();
+  private static TierManager tierManager = TierManager.getInstance();
 
-  public static long TEST_QUERY_JOB_ID = QueryResourceManager.getInstance().assignQueryId(true);
+  public static long TEST_QUERY_JOB_ID = QueryResourceManager.getInstance()
+      .assignQueryId(true, 1024, 0);
   public static QueryContext TEST_QUERY_CONTEXT = new QueryContext(TEST_QUERY_JOB_ID);
 
-  private static long oldSeqTsFileSize = config.getSeqTsFileSize();
-  private static long oldUnSeqTsFileSize = config.getUnSeqTsFileSize();
+  private static long oldTsFileThreshold = config.getTsFileSizeThreshold();
 
   private static long oldGroupSizeInByte = config.getMemtableSizeThreshold();
 
@@ -113,54 +116,64 @@ public class EnvironmentUtils {
     StorageEngine.getInstance().reset();
     IoTDBDescriptor.getInstance().getConfig().setReadOnly(false);
 
+    StatMonitor.getInstance().close();
     // clean wal
-    WALManager.getInstance().stop();
+    MultiFileLogNodeManager.getInstance().stop();
     // clean cache
     if (config.isMetaDataCacheEnable()) {
       ChunkCache.getInstance().clear();
       TimeSeriesMetadataCache.getInstance().clear();
-      BloomFilterCache.getInstance().clear();
     }
     // close metadata
-    IoTDB.configManager.clear();
+    IoTDB.metaManager.clear();
     MetricsService.getInstance().stop();
     // delete all directory
     cleanAllDir();
 
-    config.setSeqTsFileSize(oldSeqTsFileSize);
-    config.setUnSeqTsFileSize(oldUnSeqTsFileSize);
+    config.setTsFileSizeThreshold(oldTsFileThreshold);
     config.setMemtableSizeThreshold(oldGroupSizeInByte);
   }
 
   public static void cleanAllDir() throws IOException {
     // delete sequential files
-    for (String path : directoryManager.getAllSequenceFileFolders()) {
-      cleanDir(path);
+    for (FSPath path : tierManager.getAllSequenceFileFolders()) {
+      cleanDir(path.toFile());
     }
     // delete unsequence files
-    for (String path : directoryManager.getAllUnSequenceFileFolders()) {
-      cleanDir(path);
+    for (FSPath path : tierManager.getAllUnSequenceFileFolders()) {
+      cleanDir(path.toFile());
     }
     // delete system info
-    cleanDir(config.getSystemDir());
+    cleanDir(new File(config.getSystemDir()));
     // delete wal
-    for (String walDir : config.getWalDirs()) {
-      cleanDir(walDir);
-    }
+    cleanDir(new File(config.getWalDir()));
     // delete data files
-    for (String dataDir : config.getDataDirs()) {
-      cleanDir(dataDir);
+    for (FSPath[] tierDataDirs : config.getDataDirs()) {
+      for (FSPath dataDir: tierDataDirs) {
+        cleanDir(dataDir.toFile());
+      }
     }
   }
 
-  public static void cleanDir(String dir) throws IOException {
-    FileUtils.deleteDirectory(new File(dir));
+  public static void cleanDir(File dir) throws IOException {
+    FileUtils.deleteDirectory(dir);
   }
 
-  /** disable memory control</br> this function should be called before all code in the setup */
+  /**
+   * disable the system monitor</br> this function should be called before all code in the setup
+   */
+  public static void closeStatMonitor() {
+    config.setEnableStatMonitor(false);
+  }
+
+  /**
+   * disable memory control</br> this function should be called before all code in the setup
+   */
   public static void envSetUp() throws StartupException {
-    IoTDB.configManager.init();
+    IoTDB.metaManager.init();
     createAllDir();
+    // disable the system monitor
+    config.setEnableStatMonitor(false);
     IAuthorizer authorizer;
     try {
       authorizer = BasicAuthorizer.getInstance();
@@ -173,30 +186,30 @@ public class EnvironmentUtils {
       throw new StartupException(e);
     }
     StorageEngine.getInstance().reset();
-    WALManager.getInstance().start();
+    MultiFileLogNodeManager.getInstance().start();
     FlushManager.getInstance().start();
-    TEST_QUERY_JOB_ID = QueryResourceManager.getInstance().assignQueryId(true);
+    TEST_QUERY_JOB_ID = QueryResourceManager.getInstance().assignQueryId(true, 1024, 0);
     TEST_QUERY_CONTEXT = new QueryContext(TEST_QUERY_JOB_ID);
   }
 
   private static void createAllDir() {
     // create sequential files
-    for (String path : directoryManager.getAllSequenceFileFolders()) {
+    for (FSPath path : tierManager.getAllSequenceFileFolders()) {
       createDir(path);
     }
     // create unsequential files
-    for (String path : directoryManager.getAllUnSequenceFileFolders()) {
+    for (FSPath path : tierManager.getAllUnSequenceFileFolders()) {
       createDir(path);
     }
     // create storage group
     createDir(config.getSystemDir());
     // create wal
-    for (String walDir : config.getWalDirs()) {
-      createDir(walDir);
-    }
+    createDir(config.getWalDir());
     // create data
-    for (String dataDir : config.getDataDirs()) {
-      createDir(dataDir);
+    for (FSPath[] tierDataDirs : config.getDataDirs()) {
+      for (FSPath dataDir: tierDataDirs) {
+        createDir(dataDir);
+      }
     }
   }
 
@@ -205,10 +218,15 @@ public class EnvironmentUtils {
     file.mkdirs();
   }
 
+  private static void createDir(FSPath dir) {
+    File file = dir.toFile();
+    file.mkdirs();
+  }
+
   public static void prepareData() throws SQLException {
-    try (Connection connection =
-            DriverManager.getConnection(
-                Config.IOTDB_URL_PREFIX + "127.0.0.1:6667/", "root", "root");
+    try (Connection connection = DriverManager
+        .getConnection(Config.IOTDB_URL_PREFIX + "127.0.0.1:6667/", "root",
+            "root");
         Statement statement = connection.createStatement()) {
 
       for (String sql : creationSqls) {
@@ -221,42 +239,36 @@ public class EnvironmentUtils {
 
       // prepare BufferWrite file
       for (int i = 5000; i < 7000; i++) {
-        statement.execute(
-            String.format(
-                Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "true"));
+        statement.execute(String
+            .format(Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "true"));
       }
       statement.execute("flush");
       for (int i = 7500; i < 8500; i++) {
-        statement.execute(
-            String.format(
-                Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "false"));
+        statement.execute(String
+            .format(Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "false"));
       }
       statement.execute("flush");
       // prepare Unseq-File
       for (int i = 500; i < 1500; i++) {
-        statement.execute(
-            String.format(
-                Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "true"));
+        statement.execute(String
+            .format(Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "true"));
       }
       statement.execute("flush");
       for (int i = 3000; i < 6500; i++) {
-        statement.execute(
-            String.format(
-                Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "false"));
+        statement.execute(String
+            .format(Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "false"));
       }
       statement.execute("merge");
 
       // prepare BufferWrite cache
       for (int i = 9000; i < 10000; i++) {
-        statement.execute(
-            String.format(
-                Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "true"));
+        statement.execute(String
+            .format(Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "true"));
       }
       // prepare Overflow cache
       for (int i = 2000; i < 2500; i++) {
-        statement.execute(
-            String.format(
-                Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "false"));
+        statement.execute(String
+            .format(Locale.ENGLISH, insertTemplate, i, i, i, (double) i, "'" + i + "'", "false"));
       }
 
     } catch (Exception e) {

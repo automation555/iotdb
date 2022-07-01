@@ -23,8 +23,6 @@ import org.apache.iotdb.tsfile.file.header.ChunkGroupHeader;
 import org.apache.iotdb.tsfile.file.header.ChunkHeader;
 import org.apache.iotdb.tsfile.file.header.PageHeader;
 import org.apache.iotdb.tsfile.file.metadata.ChunkMetadata;
-import org.apache.iotdb.tsfile.file.metadata.IChunkMetadata;
-import org.apache.iotdb.tsfile.file.metadata.ITimeSeriesMetadata;
 import org.apache.iotdb.tsfile.file.metadata.MetadataIndexEntry;
 import org.apache.iotdb.tsfile.file.metadata.MetadataIndexNode;
 import org.apache.iotdb.tsfile.file.metadata.TimeseriesMetadata;
@@ -45,6 +43,7 @@ import org.apache.iotdb.tsfile.v2.file.metadata.MetadataIndexNodeV2;
 import org.apache.iotdb.tsfile.v2.file.metadata.TimeseriesMetadataV2;
 import org.apache.iotdb.tsfile.v2.file.metadata.TsFileMetadataV2;
 
+import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -71,7 +70,7 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
    * @param file the data file
    * @throws IOException If some I/O error occurs
    */
-  public TsFileSequenceReaderForV2(String file) throws IOException {
+  public TsFileSequenceReaderForV2(File file) throws IOException {
     this(file, true);
   }
 
@@ -81,7 +80,7 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
    * @param file -given file name
    * @param loadMetadataSize -whether load meta data size
    */
-  public TsFileSequenceReaderForV2(String file, boolean loadMetadataSize) throws IOException {
+  public TsFileSequenceReaderForV2(File file, boolean loadMetadataSize) throws IOException {
     super(file, loadMetadataSize);
   }
 
@@ -147,11 +146,11 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
    */
   @Override
   public TsFileMetadata readFileMetadata() throws IOException {
-    if (tsFileMetaData == null || versionInfo == null) {
-      Pair<TsFileMetadata, List<Pair<Long, Long>>> pair =
-          TsFileMetadataV2.deserializeFrom(readData(fileMetadataPos, fileMetadataSize));
-      tsFileMetaData = pair.left;
-      versionInfo = pair.right;
+    if (tsFileMetaData == null) {
+      versionInfo = new ArrayList<>();
+      tsFileMetaData =
+          TsFileMetadataV2.deserializeFrom(
+              readData(fileMetadataPos, fileMetadataSize), versionInfo);
     }
     return tsFileMetaData;
   }
@@ -198,8 +197,10 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
     return searchResult >= 0 ? timeseriesMetadataList.get(searchResult) : null;
   }
 
-  /*Find the leaf node that contains path, return all the sensors in that leaf node which are also
-  in allSensors set */
+  /**
+   * Find the leaf node that contains path, return all the sensors in that leaf node which are also
+   * in allSensors set
+   */
   @SuppressWarnings("squid:S3776")
   @Override
   public List<TimeseriesMetadata> readTimeseriesMetadata(Path path, Set<String> allSensors)
@@ -237,7 +238,7 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
 
   @SuppressWarnings("squid:S3776")
   @Override
-  public List<ITimeSeriesMetadata> readITimeseriesMetadata(String device, Set<String> measurements)
+  public List<TimeseriesMetadata> readTimeseriesMetadata(String device, Set<String> measurements)
       throws IOException {
     readFileMetadata();
     MetadataIndexNode deviceMetadataIndexNode = tsFileMetaData.getMetadataIndex();
@@ -247,7 +248,7 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
     if (metadataIndexPair == null) {
       return Collections.emptyList();
     }
-    List<ITimeSeriesMetadata> resultTimeseriesMetadataList = new ArrayList<>();
+    List<TimeseriesMetadata> resultTimeseriesMetadataList = new ArrayList<>();
     List<String> measurementList = new ArrayList<>(measurements);
     Set<String> measurementsHadFound = new HashSet<>();
     for (int i = 0; i < measurementList.size(); i++) {
@@ -426,8 +427,7 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
   }
 
   @Override
-  public Map<String, List<TimeseriesMetadata>> getAllTimeseriesMetadata(boolean needChunkMetadata)
-      throws IOException {
+  public Map<String, List<TimeseriesMetadata>> getAllTimeseriesMetadata() throws IOException {
     if (tsFileMetaData == null) {
       readFileMetadata();
     }
@@ -571,6 +571,10 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
     return PageHeaderV2.deserializeFrom(tsFileInput.wrapAsInputStream(), type);
   }
 
+  public ByteBuffer readCompressedPage(PageHeader header) throws IOException {
+    return readData(-1, header.getCompressedSize());
+  }
+
   public long readVersion() throws IOException {
     ByteBuffer buffer = ByteBuffer.allocate(Long.BYTES);
     if (ReadWriteIOUtils.readAsPossible(tsFileInput, buffer) == 0) {
@@ -608,7 +612,7 @@ public class TsFileSequenceReaderForV2 extends TsFileSequenceReader implements A
       return;
     }
     int versionIndex = 0;
-    for (IChunkMetadata chunkMetadata : chunkMetadataList) {
+    for (ChunkMetadata chunkMetadata : chunkMetadataList) {
 
       while (chunkMetadata.getOffsetOfChunkHeader() >= versionInfo.get(versionIndex).left) {
         versionIndex++;

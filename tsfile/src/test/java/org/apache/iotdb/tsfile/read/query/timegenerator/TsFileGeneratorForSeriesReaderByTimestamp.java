@@ -20,15 +20,17 @@ package org.apache.iotdb.tsfile.read.query.timegenerator;
 
 import org.apache.iotdb.tsfile.common.conf.TSFileConfig;
 import org.apache.iotdb.tsfile.common.conf.TSFileDescriptor;
+import org.apache.iotdb.tsfile.constant.TestConstant;
 import org.apache.iotdb.tsfile.exception.write.WriteProcessException;
 import org.apache.iotdb.tsfile.file.metadata.enums.CompressionType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSEncoding;
+import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
+import org.apache.iotdb.tsfile.fileSystem.fsFactory.FSFactory;
 import org.apache.iotdb.tsfile.read.common.Path;
 import org.apache.iotdb.tsfile.utils.FileUtils;
 import org.apache.iotdb.tsfile.utils.FileUtils.Unit;
 import org.apache.iotdb.tsfile.utils.RecordUtils;
-import org.apache.iotdb.tsfile.utils.TsFileGeneratorForTest;
 import org.apache.iotdb.tsfile.write.TsFileWriter;
 import org.apache.iotdb.tsfile.write.record.TSRecord;
 import org.apache.iotdb.tsfile.write.schema.MeasurementSchema;
@@ -53,8 +55,7 @@ public class TsFileGeneratorForSeriesReaderByTimestamp {
       LoggerFactory.getLogger(TsFileGeneratorForSeriesReaderByTimestamp.class);
   public static TsFileWriter innerWriter;
   public static String inputDataFile;
-  public static String outputDataFile =
-      TsFileGeneratorForTest.getTestTsFilePath("root.sg1", 0, 0, 0);
+  public static String outputDataFile = TestConstant.BASE_OUTPUT_PATH.concat("testTsFile.tsfile");
   public static String errorOutputDataFile;
   public static Schema schema;
   private static int rowCount;
@@ -62,6 +63,8 @@ public class TsFileGeneratorForSeriesReaderByTimestamp {
   private static int pageSize;
   private static int preChunkGroupSize;
   private static int prePageSize;
+  private static final FSFactory fsFactory =
+      FSFactoryProducer.getFSFactory(TestConstant.DEFAULT_TEST_FS);
 
   public static void generateFile(int rc, int rs, int ps) throws IOException {
     rowCount = rc;
@@ -72,20 +75,8 @@ public class TsFileGeneratorForSeriesReaderByTimestamp {
   }
 
   public static void prepare() throws IOException {
-    File file = new File(outputDataFile);
-    if (!file.getParentFile().exists()) {
-      Assert.assertTrue(file.getParentFile().mkdirs());
-    }
-    inputDataFile = TsFileGeneratorForTest.getTestTsFilePath("root.sg1", 0, 0, 1);
-    file = new File(inputDataFile);
-    if (!file.getParentFile().exists()) {
-      Assert.assertTrue(file.getParentFile().mkdirs());
-    }
-    errorOutputDataFile = TsFileGeneratorForTest.getTestTsFilePath("root.sg1", 0, 0, 2);
-    file = new File(errorOutputDataFile);
-    if (!file.getParentFile().exists()) {
-      Assert.assertTrue(file.getParentFile().mkdirs());
-    }
+    inputDataFile = TestConstant.BASE_OUTPUT_PATH.concat("perTestInputData");
+    errorOutputDataFile = TestConstant.BASE_OUTPUT_PATH.concat("perTestErrorOutputData.tsfile");
     generateTestData();
     generateSampleInputDataFile();
   }
@@ -93,22 +84,22 @@ public class TsFileGeneratorForSeriesReaderByTimestamp {
   public static void after() {
     TSFileDescriptor.getInstance().getConfig().setGroupSizeInByte(preChunkGroupSize);
     TSFileDescriptor.getInstance().getConfig().setMaxNumberOfPointsInPage(prePageSize);
-    File file = new File(inputDataFile);
+    File file = fsFactory.getFile(inputDataFile);
     if (file.exists()) {
       Assert.assertTrue(file.delete());
     }
-    file = new File(outputDataFile);
+    file = fsFactory.getFile(outputDataFile);
     if (file.exists()) {
       Assert.assertTrue(file.delete());
     }
-    file = new File(errorOutputDataFile);
+    file = fsFactory.getFile(errorOutputDataFile);
     if (file.exists()) {
       Assert.assertTrue(file.delete());
     }
   }
 
   private static void generateSampleInputDataFile() throws IOException {
-    File file = new File(inputDataFile);
+    File file = fsFactory.getFile(inputDataFile);
     if (file.exists()) {
       Assert.assertTrue(file.delete());
     }
@@ -165,8 +156,8 @@ public class TsFileGeneratorForSeriesReaderByTimestamp {
   }
 
   public static void write() throws IOException {
-    File file = new File(outputDataFile);
-    File errorFile = new File(errorOutputDataFile);
+    File file = fsFactory.getFile(outputDataFile);
+    File errorFile = fsFactory.getFile(errorOutputDataFile);
     if (file.exists()) {
       Assert.assertTrue(file.delete());
     }
@@ -194,49 +185,49 @@ public class TsFileGeneratorForSeriesReaderByTimestamp {
     TSFileConfig conf = TSFileDescriptor.getInstance().getConfig();
     schema = new Schema();
     schema.registerTimeseries(
-        new Path("d1"),
+        new Path("d1", "s1"),
         new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.valueOf(conf.getValueEncoder())));
     schema.registerTimeseries(
-        new Path("d1"),
+        new Path("d1", "s2"),
         new MeasurementSchema(
             "s2",
             TSDataType.INT64,
             TSEncoding.valueOf(conf.getValueEncoder()),
             CompressionType.UNCOMPRESSED));
     schema.registerTimeseries(
-        new Path("d1"),
+        new Path("d1", "s3"),
         new MeasurementSchema(
             "s3",
             TSDataType.INT64,
             TSEncoding.valueOf(conf.getValueEncoder()),
             CompressionType.SNAPPY));
     schema.registerTimeseries(
-        new Path("d1"), new MeasurementSchema("s4", TSDataType.TEXT, TSEncoding.PLAIN));
+        new Path("d1", "s4"), new MeasurementSchema("s4", TSDataType.TEXT, TSEncoding.PLAIN));
     schema.registerTimeseries(
-        new Path("d1"), new MeasurementSchema("s5", TSDataType.BOOLEAN, TSEncoding.PLAIN));
+        new Path("d1", "s5"), new MeasurementSchema("s5", TSDataType.BOOLEAN, TSEncoding.PLAIN));
     schema.registerTimeseries(
-        new Path("d1"), new MeasurementSchema("s6", TSDataType.FLOAT, TSEncoding.RLE));
+        new Path("d1", "s6"), new MeasurementSchema("s6", TSDataType.FLOAT, TSEncoding.RLE));
     schema.registerTimeseries(
-        new Path("d1"), new MeasurementSchema("s7", TSDataType.DOUBLE, TSEncoding.RLE));
+        new Path("d1", "s7"), new MeasurementSchema("s7", TSDataType.DOUBLE, TSEncoding.RLE));
     schema.registerTimeseries(
-        new Path("d2"),
+        new Path("d2", "s1"),
         new MeasurementSchema("s1", TSDataType.INT32, TSEncoding.valueOf(conf.getValueEncoder())));
     schema.registerTimeseries(
-        new Path("d2"),
+        new Path("d2", "s2"),
         new MeasurementSchema(
             "s2",
             TSDataType.INT64,
             TSEncoding.valueOf(conf.getValueEncoder()),
             CompressionType.UNCOMPRESSED));
     schema.registerTimeseries(
-        new Path("d2"),
+        new Path("d2", "s3"),
         new MeasurementSchema(
             "s3",
             TSDataType.INT64,
             TSEncoding.valueOf(conf.getValueEncoder()),
             CompressionType.SNAPPY));
     schema.registerTimeseries(
-        new Path("d2"), new MeasurementSchema("s4", TSDataType.TEXT, TSEncoding.PLAIN));
+        new Path("d2", "s4"), new MeasurementSchema("s4", TSDataType.TEXT, TSEncoding.PLAIN));
   }
 
   public static void writeToFile(Schema schema) throws IOException, WriteProcessException {
@@ -268,7 +259,7 @@ public class TsFileGeneratorForSeriesReaderByTimestamp {
   }
 
   private static Scanner getDataFile(String path) {
-    File file = new File(path);
+    File file = fsFactory.getFile(path);
     try {
       Scanner in = new Scanner(file);
       return in;

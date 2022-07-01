@@ -18,25 +18,24 @@
  */
 package org.apache.iotdb.tsfile.file.metadata;
 
+import org.apache.iotdb.tsfile.common.cache.Accountable;
 import org.apache.iotdb.tsfile.file.metadata.enums.TSDataType;
 import org.apache.iotdb.tsfile.file.metadata.statistics.Statistics;
 import org.apache.iotdb.tsfile.read.common.TimeRange;
 import org.apache.iotdb.tsfile.read.controller.IChunkLoader;
-import org.apache.iotdb.tsfile.utils.FilePathUtils;
-import org.apache.iotdb.tsfile.utils.Pair;
 import org.apache.iotdb.tsfile.utils.RamUsageEstimator;
 import org.apache.iotdb.tsfile.utils.ReadWriteIOUtils;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.io.Serializable;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
 /** Metadata of one chunk. */
-public class ChunkMetadata implements IChunkMetadata {
+public class ChunkMetadata implements Accountable, IChunkMetadata {
 
   private String measurementUid;
 
@@ -61,28 +60,21 @@ public class ChunkMetadata implements IChunkMetadata {
   /** ChunkLoader of metadata, used to create ChunkReaderWrap */
   private IChunkLoader chunkLoader;
 
-  private Statistics<? extends Serializable> statistics;
+  private Statistics statistics;
 
   private boolean isFromOldTsFile = false;
 
   private long ramSize;
 
-  private static final int CHUNK_METADATA_FIXED_RAM_SIZE = 93;
+  private static final int CHUNK_METADATA_FIXED_RAM_SIZE = 80;
 
   // used for SeriesReader to indicate whether it is a seq/unseq timeseries metadata
   private boolean isSeq = true;
   private boolean isClosed;
-  private String filePath;
-
-  // 0x80 for time chunk, 0x40 for value chunk, 0x00 for common chunk
+  private File file;
   private byte mask;
 
-  // used for ChunkCache, Eg:"root.sg1/0/0"
-  private String tsFilePrefixPath;
-  // high 32 bit is compaction level, low 32 bit is merge count
-  private long compactionVersion;
-
-  public ChunkMetadata() {}
+  private ChunkMetadata() {}
 
   /**
    * constructor of ChunkMetaData.
@@ -93,10 +85,7 @@ public class ChunkMetadata implements IChunkMetadata {
    * @param statistics value statistics
    */
   public ChunkMetadata(
-      String measurementUid,
-      TSDataType tsDataType,
-      long fileOffset,
-      Statistics<? extends Serializable> statistics) {
+      String measurementUid, TSDataType tsDataType, long fileOffset, Statistics statistics) {
     this.measurementUid = measurementUid;
     this.tsDataType = tsDataType;
     this.offsetOfChunkHeader = fileOffset;
@@ -107,7 +96,7 @@ public class ChunkMetadata implements IChunkMetadata {
   public String toString() {
     return String.format(
         "measurementId: %s, datatype: %s, version: %d, Statistics: %s, deleteIntervalList: %s, filePath: %s",
-        measurementUid, tsDataType, version, statistics, deleteIntervalList, filePath);
+        measurementUid, tsDataType, version, statistics, deleteIntervalList, file);
   }
 
   public long getNumOfPoints() {
@@ -129,7 +118,7 @@ public class ChunkMetadata implements IChunkMetadata {
   }
 
   @Override
-  public Statistics<? extends Serializable> getStatistics() {
+  public Statistics getStatistics() {
     return statistics;
   }
 
@@ -229,11 +218,6 @@ public class ChunkMetadata implements IChunkMetadata {
     return chunkLoader;
   }
 
-  @Override
-  public boolean needSetChunkLoader() {
-    return chunkLoader == null;
-  }
-
   public void setChunkLoader(IChunkLoader chunkLoader) {
     this.chunkLoader = chunkLoader;
   }
@@ -249,13 +233,16 @@ public class ChunkMetadata implements IChunkMetadata {
     ChunkMetadata that = (ChunkMetadata) o;
     return offsetOfChunkHeader == that.offsetOfChunkHeader
         && version == that.version
-        && compactionVersion == that.compactionVersion
-        && tsFilePrefixPath.equals(that.tsFilePrefixPath);
+        && Objects.equals(measurementUid, that.measurementUid)
+        && tsDataType == that.tsDataType
+        && Objects.equals(deleteIntervalList, that.deleteIntervalList)
+        && Objects.equals(statistics, that.statistics);
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(tsFilePrefixPath, version, compactionVersion, offsetOfChunkHeader);
+    return Objects.hash(
+        measurementUid, deleteIntervalList, tsDataType, statistics, version, offsetOfChunkHeader);
   }
 
   @Override
@@ -278,7 +265,6 @@ public class ChunkMetadata implements IChunkMetadata {
 
   public long calculateRamSize() {
     return CHUNK_METADATA_FIXED_RAM_SIZE
-        + RamUsageEstimator.sizeOf(tsFilePrefixPath)
         + RamUsageEstimator.sizeOf(measurementUid)
         + statistics.calculateRamSize();
   }
@@ -289,9 +275,19 @@ public class ChunkMetadata implements IChunkMetadata {
         + Statistics.getSizeByType(dataType);
   }
 
+  @Override
+  public void setRamSize(long size) {
+    this.ramSize = size;
+  }
+
+  /** must use calculate ram size first */
+  @Override
+  public long getRamSize() {
+    return ramSize;
+  }
+
   public void mergeChunkMetadata(ChunkMetadata chunkMetadata) {
-    Statistics<? extends Serializable> statistics = chunkMetadata.getStatistics();
-    this.statistics.mergeStatistics(statistics);
+    this.statistics.mergeStatistics(chunkMetadata.getStatistics());
     this.ramSize = calculateRamSize();
   }
 
@@ -313,19 +309,12 @@ public class ChunkMetadata implements IChunkMetadata {
     isClosed = closed;
   }
 
-  public String getFilePath() {
-    return filePath;
+  public File getFile() {
+    return file;
   }
 
-  public void setFilePath(String filePath) {
-    this.filePath = filePath;
-
-    Pair<String, long[]> tsFilePrefixPathAndTsFileVersionPair =
-        FilePathUtils.getTsFilePrefixPathAndTsFileVersionPair(filePath);
-    // set tsFilePrefixPath
-    tsFilePrefixPath = tsFilePrefixPathAndTsFileVersionPair.left;
-    this.version = tsFilePrefixPathAndTsFileVersionPair.right[0];
-    this.compactionVersion = tsFilePrefixPathAndTsFileVersionPair.right[1];
+  public void setFile(File file) {
+    this.file = file;
   }
 
   @Override

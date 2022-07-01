@@ -22,9 +22,9 @@ package org.apache.iotdb.db.engine.modification;
 import org.apache.iotdb.db.engine.modification.io.LocalTextModificationAccessor;
 import org.apache.iotdb.db.engine.modification.io.ModificationReader;
 import org.apache.iotdb.db.engine.modification.io.ModificationWriter;
-import org.apache.iotdb.db.engine.storagegroup.TsFileResource;
 import org.apache.iotdb.tsfile.common.constant.TsFileConstant;
 import org.apache.iotdb.tsfile.fileSystem.FSFactoryProducer;
+import org.apache.iotdb.tsfile.utils.FSUtils;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,25 +47,23 @@ public class ModificationFile implements AutoCloseable {
 
   private static final Logger logger = LoggerFactory.getLogger(ModificationFile.class);
   public static final String FILE_SUFFIX = ".mods";
-  public static final String COMPACTION_FILE_SUFFIX = ".compaction.mods";
 
-  // lazy loaded, set null when closed
   private List<Modification> modifications;
   private ModificationWriter writer;
   private ModificationReader reader;
-  private String filePath;
+  private File file;
   private Random random = new Random();
 
   /**
    * Construct a ModificationFile using a file as its storage.
    *
-   * @param filePath the path of the storage file.
+   * @param file the storage file.
    */
-  public ModificationFile(String filePath) {
-    LocalTextModificationAccessor accessor = new LocalTextModificationAccessor(filePath);
+  public ModificationFile(File file) {
+    LocalTextModificationAccessor accessor = new LocalTextModificationAccessor(file);
     this.writer = accessor;
     this.reader = accessor;
-    this.filePath = filePath;
+    this.file = file;
   }
 
   private void init() {
@@ -91,8 +89,8 @@ public class ModificationFile implements AutoCloseable {
 
   public void abort() throws IOException {
     synchronized (this) {
-      writer.abort();
-      if (modifications != null && !modifications.isEmpty()) {
+      if (!modifications.isEmpty()) {
+        writer.abort();
         modifications.remove(modifications.size() - 1);
       }
     }
@@ -107,10 +105,9 @@ public class ModificationFile implements AutoCloseable {
    */
   public void write(Modification mod) throws IOException {
     synchronized (this) {
+      checkInit();
       writer.write(mod);
-      if (modifications != null) {
-        modifications.add(mod);
-      }
+      modifications.add(mod);
     }
   }
 
@@ -127,20 +124,20 @@ public class ModificationFile implements AutoCloseable {
   }
 
   public String getFilePath() {
-    return filePath;
+    return file.getPath();
   }
 
-  public void setFilePath(String filePath) {
-    this.filePath = filePath;
+  public void setFile(File file) {
+    this.file = file;
   }
 
   public void remove() throws IOException {
     close();
-    FSFactoryProducer.getFSFactory().getFile(filePath).delete();
+    file.delete();
   }
 
   public boolean exists() {
-    return new File(filePath).exists();
+    return file.exists();
   }
 
   /**
@@ -158,26 +155,19 @@ public class ModificationFile implements AutoCloseable {
     while (true) {
       String hardlinkSuffix =
           TsFileConstant.PATH_SEPARATOR + System.currentTimeMillis() + "_" + random.nextLong();
-      File hardlink = new File(filePath + hardlinkSuffix);
+      File hardlink =
+          FSFactoryProducer.getFSFactory(FSUtils.getFSType(file))
+              .getFile(file.getPath() + hardlinkSuffix);
 
       try {
-        Files.createLink(Paths.get(hardlink.getAbsolutePath()), Paths.get(filePath));
-        return new ModificationFile(hardlink.getAbsolutePath());
+        Files.createLink(Paths.get(hardlink.getAbsolutePath()), file.toPath());
+        return new ModificationFile(hardlink);
       } catch (FileAlreadyExistsException e) {
         // retry a different name if the file is already created
       } catch (IOException e) {
-        logger.error("Cannot create hardlink for {}", filePath, e);
+        logger.error("Cannot create hardlink for {}", file, e);
         return null;
       }
     }
-  }
-
-  public static ModificationFile getNormalMods(TsFileResource tsFileResource) {
-    return new ModificationFile(tsFileResource.getTsFilePath() + ModificationFile.FILE_SUFFIX);
-  }
-
-  public static ModificationFile getCompactionMods(TsFileResource tsFileResource) {
-    return new ModificationFile(
-        tsFileResource.getTsFilePath() + ModificationFile.COMPACTION_FILE_SUFFIX);
   }
 }

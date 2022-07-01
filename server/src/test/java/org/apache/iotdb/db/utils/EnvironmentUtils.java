@@ -18,46 +18,32 @@
  */
 package org.apache.iotdb.db.utils;
 
-import org.apache.iotdb.commons.auth.AuthException;
-import org.apache.iotdb.commons.udf.service.UDFRegistrationService;
-import org.apache.iotdb.db.auth.AuthorizerManager;
+import org.apache.iotdb.db.auth.AuthException;
+import org.apache.iotdb.db.auth.authorizer.BasicAuthorizer;
 import org.apache.iotdb.db.conf.IoTDBConfig;
 import org.apache.iotdb.db.conf.IoTDBDescriptor;
-import org.apache.iotdb.db.conf.directories.DirectoryManager;
 import org.apache.iotdb.db.constant.TestConstant;
 import org.apache.iotdb.db.engine.StorageEngine;
-import org.apache.iotdb.db.engine.cache.BloomFilterCache;
 import org.apache.iotdb.db.engine.cache.ChunkCache;
 import org.apache.iotdb.db.engine.cache.TimeSeriesMetadataCache;
-import org.apache.iotdb.db.engine.compaction.CompactionTaskManager;
-import org.apache.iotdb.db.engine.cq.ContinuousQueryService;
+import org.apache.iotdb.db.engine.compaction.CompactionMergeTaskPoolManager;
+import org.apache.iotdb.db.engine.tier.TierManager;
 import org.apache.iotdb.db.engine.trigger.service.TriggerRegistrationService;
-import org.apache.iotdb.db.exception.ContinuousQueryException;
 import org.apache.iotdb.db.exception.StorageEngineException;
 import org.apache.iotdb.db.exception.TriggerManagementException;
-import org.apache.iotdb.db.metadata.idtable.IDTableManager;
-import org.apache.iotdb.db.metadata.idtable.entry.DeviceIDFactory;
+import org.apache.iotdb.db.exception.UDFRegistrationException;
 import org.apache.iotdb.db.query.context.QueryContext;
 import org.apache.iotdb.db.query.control.FileReaderManager;
 import org.apache.iotdb.db.query.control.QueryResourceManager;
-import org.apache.iotdb.db.query.control.QueryTimeManager;
-import org.apache.iotdb.db.query.executor.LastQueryExecutor;
-import org.apache.iotdb.db.rescon.MemTableManager;
+import org.apache.iotdb.db.query.control.TracingManager;
+import org.apache.iotdb.db.query.udf.service.UDFRegistrationService;
 import org.apache.iotdb.db.rescon.PrimitiveArrayManager;
 import org.apache.iotdb.db.rescon.SystemInfo;
-import org.apache.iotdb.db.rescon.TsFileResourceManager;
 import org.apache.iotdb.db.service.IoTDB;
-import org.apache.iotdb.db.sync.pipedata.queue.PipeDataQueueFactory;
-import org.apache.iotdb.db.wal.WALManager;
-import org.apache.iotdb.db.wal.recover.WALRecoverManager;
-import org.apache.iotdb.metrics.config.MetricConfigDescriptor;
-import org.apache.iotdb.rpc.TConfigurationConst;
-import org.apache.iotdb.rpc.TSocketWrapper;
-import org.apache.iotdb.tsfile.utils.FilePathUtils;
-import org.apache.iotdb.udf.api.exception.UDFRegistrationException;
+import org.apache.iotdb.tsfile.fileSystem.FSPath;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.thrift.TConfiguration;
+import org.apache.thrift.transport.TSocket;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
 import org.slf4j.Logger;
@@ -81,37 +67,33 @@ public class EnvironmentUtils {
   private static final Logger logger = LoggerFactory.getLogger(EnvironmentUtils.class);
 
   private static final IoTDBConfig config = IoTDBDescriptor.getInstance().getConfig();
-  private static final DirectoryManager directoryManager = DirectoryManager.getInstance();
+  private static final TierManager tierManager = TierManager.getInstance();
 
   public static long TEST_QUERY_JOB_ID = 1;
   public static QueryContext TEST_QUERY_CONTEXT = new QueryContext(TEST_QUERY_JOB_ID);
 
-  private static final long oldSeqTsFileSize = config.getSeqTsFileSize();
-  private static final long oldUnSeqTsFileSize = config.getUnSeqTsFileSize();
+  private static final long oldTsFileThreshold = config.getTsFileSizeThreshold();
 
   private static final long oldGroupSizeInByte = config.getMemtableSizeThreshold();
 
   private static IoTDB daemon;
-
-  private static TConfiguration tConfiguration = TConfigurationConst.defaultTConfiguration;
 
   public static boolean examinePorts =
       Boolean.parseBoolean(System.getProperty("test.port.closed", "false"));
 
   public static void cleanEnv() throws IOException, StorageEngineException {
     // wait all compaction finished
-    CompactionTaskManager.getInstance().waitAllCompactionFinish();
+    CompactionMergeTaskPoolManager.getInstance().waitAllCompactionFinish();
 
     // deregister all user defined classes
     try {
       UDFRegistrationService.getInstance().deregisterAll();
       TriggerRegistrationService.getInstance().deregisterAll();
-      ContinuousQueryService.getInstance().deregisterAll();
-    } catch (UDFRegistrationException | TriggerManagementException | ContinuousQueryException e) {
+    } catch (UDFRegistrationException | TriggerManagementException e) {
       fail(e.getMessage());
     }
 
-    logger.debug("EnvironmentUtil cleanEnv...");
+    logger.warn("EnvironmentUtil cleanEnv...");
     if (daemon != null) {
       daemon.stop();
       daemon = null;
@@ -138,10 +120,6 @@ public class EnvironmentUtils {
       }
     }
 
-    // clean wal manager
-    WALManager.getInstance().clear();
-    WALRecoverManager.getInstance().clear();
-
     // clean storage group manager
     if (!StorageEngine.getInstance().deleteAll()) {
       logger.error("Can't close the storage group manager in EnvironmentUtils");
@@ -149,20 +127,19 @@ public class EnvironmentUtils {
     }
 
     IoTDBDescriptor.getInstance().getConfig().setReadOnly(false);
-    // We must disable MQTT service as it will cost a lot of time to be shutdown, which may slow our
-    // unit tests.
-    IoTDBDescriptor.getInstance().getConfig().setEnableMQTTService(false);
 
     // clean cache
     if (config.isMetaDataCacheEnable()) {
       ChunkCache.getInstance().clear();
       TimeSeriesMetadataCache.getInstance().clear();
-      BloomFilterCache.getInstance().clear();
     }
     // close metadata
-    IoTDB.configManager.clear();
+    IoTDB.metaManager.clear();
 
-    QueryTimeManager.getInstance().clear();
+    // close tracing
+    if (config.isEnablePerformanceTracing()) {
+      TracingManager.getInstance().close();
+    }
 
     // close array manager
     PrimitiveArrayManager.close();
@@ -170,30 +147,14 @@ public class EnvironmentUtils {
     // clear system info
     SystemInfo.getInstance().close();
 
-    // clear memtable manager info
-    MemTableManager.getInstance().close();
-
-    // clear tsFileResource manager info
-    TsFileResourceManager.getInstance().clear();
-
-    // clear id table manager
-    IDTableManager.getInstance().clear();
-
-    // clear last query executor
-    LastQueryExecutor.clear();
-
-    // clear pipe data queue
-    PipeDataQueueFactory.clear();
-
     // delete all directory
     cleanAllDir();
-    config.setSeqTsFileSize(oldSeqTsFileSize);
-    config.setUnSeqTsFileSize(oldUnSeqTsFileSize);
+    config.setTsFileSizeThreshold(oldTsFileThreshold);
     config.setMemtableSizeThreshold(oldGroupSizeInByte);
   }
 
   private static boolean examinePorts() {
-    TTransport transport = TSocketWrapper.wrap(tConfiguration, "127.0.0.1", 6667, 100);
+    TTransport transport = new TSocket("127.0.0.1", 6667, 100);
     if (!transport.isOpen()) {
       try {
         transport.open();
@@ -205,7 +166,7 @@ public class EnvironmentUtils {
       }
     }
     // try sync service
-    transport = TSocketWrapper.wrap(tConfiguration, "127.0.0.1", 5555, 100);
+    transport = new TSocket("127.0.0.1", 5555, 100);
     if (!transport.isOpen()) {
       try {
         transport.open();
@@ -228,8 +189,8 @@ public class EnvironmentUtils {
     }
     // try MetricService
     try (Socket socket = new Socket()) {
-      socket.connect(new InetSocketAddress("127.0.0.1", 9091), 100);
-      logger.error("stop MetricService failed. 9091 can be connected now.");
+      socket.connect(new InetSocketAddress("127.0.0.1", 8181), 100);
+      logger.error("stop MetricService failed. 8181 can be connected now.");
       return false;
     } catch (Exception e) {
       // do nothing
@@ -240,70 +201,60 @@ public class EnvironmentUtils {
 
   public static void cleanAllDir() throws IOException {
     // delete sequential files
-    for (String path : directoryManager.getAllSequenceFileFolders()) {
-      cleanDir(path);
+    for (FSPath path : tierManager.getAllSequenceFileFolders()) {
+      cleanDir(path.toFile());
     }
     // delete unsequence files
-    for (String path : directoryManager.getAllUnSequenceFileFolders()) {
-      cleanDir(path);
+    for (FSPath path : tierManager.getAllUnSequenceFileFolders()) {
+      cleanDir(path.toFile());
     }
     // delete system info
-    cleanDir(config.getSystemDir());
-    // delete query
-    cleanDir(config.getQueryDir());
-    // delete tracing
-    cleanDir(config.getTracingDir());
-    // delete ulog
-    cleanDir(config.getUdfDir());
-    // delete tlog
-    cleanDir(config.getTriggerDir());
-    // delete extPipe
-    cleanDir(config.getExtPipeDir());
-    // delete ext
-    cleanDir(config.getExtDir());
-    // delete mqtt dir
-    cleanDir(config.getMqttDir());
+    cleanDir(new File(config.getSystemDir()));
     // delete wal
-    for (String walDir : config.getWalDirs()) {
-      cleanDir(walDir);
-    }
-    // delete sync dir
-    cleanDir(config.getSyncDir());
+    cleanDir(new File(config.getWalDir()));
+    // delete query
+    cleanDir(new File(config.getQueryDir()));
+    // delete tracing
+    cleanDir(new File(config.getTracingDir()));
+    // delete ulog
+    cleanDir(new File(config.getUdfDir()));
+    // delete tlog
+    cleanDir(new File(config.getTriggerDir()));
     // delete data files
-    for (String dataDir : config.getDataDirs()) {
-      cleanDir(dataDir);
+    for (FSPath[] tierDataDirs : config.getDataDirs()) {
+      for (FSPath dataDir : tierDataDirs) {
+        cleanDir(dataDir.toFile());
+      }
     }
   }
 
-  public static void cleanDir(String dir) throws IOException {
-    FileUtils.deleteDirectory(new File(dir));
+  public static void cleanDir(File dir) throws IOException {
+    FileUtils.deleteDirectory(dir);
+  }
+
+  /** disable the system monitor</br> this function should be called before all code in the setup */
+  public static void closeStatMonitor() {
+    config.setEnableStatMonitor(false);
   }
 
   /** disable memory control</br> this function should be called before all code in the setup */
   public static void envSetUp() {
-    logger.debug("EnvironmentUtil setup...");
-    config.setThriftServerAwaitTimeForStopService(60);
-    // we do not start 9091 port in test.
-    MetricConfigDescriptor.getInstance().getMetricConfig().setEnableMetric(false);
-    config.setAvgSeriesPointNumberThreshold(Integer.MAX_VALUE);
-    // use async wal mode in test
-    config.setAvgSeriesPointNumberThreshold(Integer.MAX_VALUE);
+    logger.warn("EnvironmentUtil setup...");
+    IoTDBDescriptor.getInstance().getConfig().setThriftServerAwaitTimeForStopService(0);
+    // we do not start 8181 port in test.
+    IoTDBDescriptor.getInstance().getConfig().setEnableMetricService(false);
+    IoTDBDescriptor.getInstance().getConfig().setAvgSeriesPointNumberThreshold(Integer.MAX_VALUE);
     if (daemon == null) {
       daemon = new IoTDB();
     }
     try {
       EnvironmentUtils.daemon.active();
     } catch (Exception e) {
-      e.printStackTrace();
       fail(e.getMessage());
     }
 
     createAllDir();
-
-    // reset id method
-    DeviceIDFactory.getInstance().reset();
-
-    TEST_QUERY_JOB_ID = QueryResourceManager.getInstance().assignQueryId(true);
+    TEST_QUERY_JOB_ID = QueryResourceManager.getInstance().assignQueryId(true, 1024, 0);
     TEST_QUERY_CONTEXT = new QueryContext(TEST_QUERY_JOB_ID);
   }
 
@@ -337,21 +288,17 @@ public class EnvironmentUtils {
   public static void restartDaemon() throws Exception {
     shutdownDaemon();
     stopDaemon();
-    IoTDB.configManager.clear();
-    IDTableManager.getInstance().clear();
-    TsFileResourceManager.getInstance().clear();
-    WALManager.getInstance().clear();
-    WALRecoverManager.getInstance().clear();
+    IoTDB.metaManager.clear();
     reactiveDaemon();
   }
 
   private static void createAllDir() {
     // create sequential files
-    for (String path : directoryManager.getAllSequenceFileFolders()) {
+    for (FSPath path : tierManager.getAllSequenceFileFolders()) {
       createDir(path);
     }
     // create unsequential files
-    for (String path : directoryManager.getAllUnSequenceFileFolders()) {
+    for (FSPath path : tierManager.getAllUnSequenceFileFolders()) {
       createDir(path);
     }
     // create storage group
@@ -359,22 +306,20 @@ public class EnvironmentUtils {
     // create sg dir
     String sgDir = FilePathUtils.regularizePath(config.getSystemDir()) + "storage_groups";
     createDir(sgDir);
-    // create sync
-    createDir(config.getSyncDir());
+    // create wal
+    createDir(config.getWalDir());
     // create query
     createDir(config.getQueryDir());
     createDir(TestConstant.OUTPUT_DATA_DIR);
-    // create wal
-    for (String walDir : config.getWalDirs()) {
-      createDir(walDir);
-    }
     // create data
-    for (String dataDir : config.getDataDirs()) {
-      createDir(dataDir);
+    for (FSPath[] tierDataDirs : config.getDataDirs()) {
+      for (FSPath dataDir : tierDataDirs) {
+        createDir(dataDir);
+      }
     }
     // create user and roles folder
     try {
-      AuthorizerManager.getInstance().reset();
+      BasicAuthorizer.getInstance().reset();
     } catch (AuthException e) {
       logger.error("create user and role folders failed", e);
       fail(e.getMessage());
@@ -383,6 +328,11 @@ public class EnvironmentUtils {
 
   private static void createDir(String dir) {
     File file = new File(dir);
+    file.mkdirs();
+  }
+
+  private static void createDir(FSPath dir) {
+    File file = dir.toFile();
     file.mkdirs();
   }
 }
