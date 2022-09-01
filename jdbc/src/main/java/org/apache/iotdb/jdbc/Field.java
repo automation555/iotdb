@@ -63,6 +63,8 @@ public class Field {
 
   public String getSqlType() {
     return sqlType;
+    
+    System.out.println("system code added");
   }
 
   public void setSqlType(String sqlType) {
